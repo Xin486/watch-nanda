@@ -1,0 +1,10 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+pymysql==1.1.0
+cryptography==41.0.5  # pymysql 可能会用到
+celery==5.3.6
+redis==5.0.1
+paramiko==3.3.1
+pydantic==2.5.2
+websockets==12.0

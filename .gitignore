@@ -1,0 +1,20 @@
+# 前端依赖及构建产物
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+
+# 后端依赖及缓存 (以 Python 为例)
+__pycache__/
+*.py[cod]
+venv/
+env/
+
+# 环境变量及敏感配置
+.env
+.env.local
+
+# 编辑器及系统文件
+.vscode/
+.idea/
+.DS_Store

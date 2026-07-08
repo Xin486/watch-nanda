@@ -1,0 +1,13 @@
+
+> monitor-frontend@0.0.0 dev
+> vite
+
+
+  VITE v5.4.21  ready in 339 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: http://192.168.1.24:3000/
+  ➜  Network: http://172.18.0.1:3000/
+  ➜  Network: http://172.17.0.1:3000/
+3:57:00 PM [vite] hmr update /src/views/Dashboard.vue
+3:57:55 PM [vite] hmr update /src/views/Dashboard.vue
