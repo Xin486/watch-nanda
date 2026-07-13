@@ -1,5 +1,6 @@
 <template>
   <div class="app-layout">
+    <!-- 左侧深色侧边栏 -->
     <aside class="sidebar">
       <div class="logo-area">
         <h2>{{ companyName || '南大仙林' }}</h2>
@@ -28,6 +29,7 @@
         <div class="menu-group-header" style="margin-top: 15px;">
           <span>管理操作</span>
         </div>
+        
         <a href="#" class="menu-item" @click.prevent="openAddServerModal">
           <i class="icon">🖥️</i> 增加服务器
         </a>
@@ -43,10 +45,12 @@
       </nav>
     </aside>
 
+    <!-- 右侧主体内容区域 -->
     <main class="main-content">
       <router-view />
     </main>
 
+    <!-- 新增服务器弹窗 -->
     <div class="modal-overlay" v-if="showAddModal" @click.self="showAddModal = false">
       <div class="modal-content">
         <h3>新增监控节点</h3>
@@ -74,9 +78,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import axios from 'axios'
 
+const route = useRoute()
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const dbGroups = ref([])
 const customGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
@@ -120,17 +126,34 @@ const submitAddServer = async () => {
     await axios.post(`http://${host}:7980/api/servers/add`, addForm.value)
     alert('服务器添加成功！后台将在一分钟内尝试连接。')
     showAddModal.value = false
-    // 通知大屏刷新列表
     window.dispatchEvent(new CustomEvent('server-updated'))
   } catch (error) {
     alert('添加失败，请检查网络')
   }
 }
 
+// 👑 全局更新网页标签名称的核心函数
+const updatePageTitle = () => {
+  document.title = localStorage.getItem('pageTitle') || 'Node Monitor'
+}
+
 onMounted(() => {
   fetchGroups()
+  
+  // 1. 初次加载时，立刻设置标题
+  updatePageTitle()
+  
+  // 2. 监听事件
   window.addEventListener('server-updated', fetchGroups)
-  window.addEventListener('storage', () => companyName.value = localStorage.getItem('companyName') || '南大仙林')
+  window.addEventListener('storage', () => {
+    companyName.value = localStorage.getItem('companyName') || '南大仙林'
+    updatePageTitle() // 同步更新网页标题
+  })
+})
+
+// 3. 监听路由跳转，防止某些浏览器在跳转时自动重置标题
+watch(() => route.path, () => {
+  updatePageTitle()
 })
 </script>
 

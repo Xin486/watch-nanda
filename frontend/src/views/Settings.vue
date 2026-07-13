@@ -1,15 +1,21 @@
 <template>
   <div class="settings-page">
     <div class="settings-grid">
+      <!-- 基础设置 -->
       <div class="panel">
         <h2>🖥️ 系统设置</h2>
         <div class="form-group">
-          <label>后台标题 (公司名称)</label>
+          <label>后台标题 (大屏与侧边栏显示)</label>
           <input type="text" v-model="companyName" placeholder="输入公司或集群名称">
-          <button class="btn btn-primary" @click="saveBaseSettings">保存生效</button>
         </div>
+        <div class="form-group" style="margin-top: 15px;">
+          <label>网页标签标题 (浏览器 Tab 栏显示)</label>
+          <input type="text" v-model="pageTitle" placeholder="例如: Node Monitor">
+        </div>
+        <button class="btn btn-primary" @click="saveBaseSettings" style="margin-top: 15px;">保存生效</button>
       </div>
 
+      <!-- 告警规则设置 -->
       <div class="panel">
         <h2>⚠️ 告警规则配置</h2>
         <p class="desc">设置触发告警的安全阈值，避免因瞬间网络抖动造成的误报。</p>
@@ -34,6 +40,7 @@
         <button class="btn btn-primary" @click="saveAlertSettings">保存告警规则</button>
       </div>
 
+      <!-- 邮件发件服务器配置 -->
       <div class="panel">
         <h2>📧 发件服务器 (SMTP)</h2>
         <p class="desc">用于系统发送告警邮件的服务端配置。</p>
@@ -67,6 +74,7 @@ import axios from 'axios'
 
 const host = window.location.hostname
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
+const pageTitle = ref(localStorage.getItem('pageTitle') || 'Node Monitor')
 
 const alertForm = ref({ enable_email_alert: false, offline_threshold_minutes: 5, alert_recipient: '' })
 const emailForm = ref({ smtp_server: '', smtp_port: 465, smtp_user: '', smtp_password: '', from_name: 'Node Monitor', from_address: '', use_tls: true })
@@ -83,22 +91,29 @@ const loadConfigs = async () => {
 }
 
 const saveBaseSettings = () => {
+  // 1. 存入本地缓存
   localStorage.setItem('companyName', companyName.value)
+  localStorage.setItem('pageTitle', pageTitle.value)
+  
+  // 2. 立即修改浏览器网页标签
+  document.title = pageTitle.value
+  
+  // 3. 通知其他组件(如侧边栏)更新
   window.dispatchEvent(new Event('storage'))
-  alert('系统设置已保存')
+  alert('✅ 系统设置已保存并生效')
 }
 
 const saveAlertSettings = async () => {
   try {
     await axios.post(`http://${host}:7980/api/settings/alert`, alertForm.value)
-    alert('告警规则已保存')
+    alert('✅ 告警规则已保存')
   } catch (e) { alert('保存失败') }
 }
 
 const saveEmailSettings = async () => {
   try {
     await axios.post(`http://${host}:7980/api/settings/email`, emailForm.value)
-    alert('发件配置已保存')
+    alert('✅ 发件配置已保存')
   } catch (e) { alert('保存失败') }
 }
 
@@ -116,7 +131,9 @@ const testEmail = async () => {
   }
 }
 
-onMounted(() => loadConfigs())
+onMounted(() => {
+  loadConfigs()
+})
 </script>
 
 <style scoped>

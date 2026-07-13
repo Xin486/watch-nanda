@@ -59,6 +59,9 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
             "ip_address": server.ip_address,
             "group_name": server.group_name,
             "status": server.status,
+            # 👇 重点：补充下面这两行，把真实的数据库账号密码传给前端
+            "ssh_user": server.ssh_user,
+            "ssh_port": server.ssh_port,
             **data
         })
     return result
@@ -130,7 +133,6 @@ def add_server(data: ServerCreate, db: Session = Depends(get_db)):
 from datetime import datetime, timedelta
 from models.models import ServerStats
 
-@app.get("/api/server/{server_id}/history")
 @app.get("/api/server/{server_id}/history")
 def get_server_history(server_id: int, days: int = 1, db: Session = Depends(get_db)):
     """获取历史负载数据（支持按天跨度并自动降采样聚合）"""
@@ -260,3 +262,26 @@ def test_email(db: Session = Depends(get_db)):
         return {"success": success, "message": msg}
     except Exception as e:
         return {"success": False, "message": str(e)}
+    
+    
+@app.delete("/api/server/{server_id}/history")
+def delete_server_history(server_id: int, db: Session = Depends(get_db)):
+    """仅清空单台机器的所有历史监控数据（保留节点本身）"""
+    db.query(ServerStats).filter(ServerStats.server_id == server_id).delete()
+    db.commit()
+    return {"success": True, "message": "历史数据清理成功"}
+
+@app.delete("/api/server/{server_id}")
+def delete_server_node(server_id: int, db: Session = Depends(get_db)):
+    """彻底删除一台服务器节点及其所有历史数据"""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        return {"success": False, "message": "找不到该服务器"}
+    
+    # 1. 先删除名下的所有历史监控数据，防止触发外键约束错误
+    db.query(ServerStats).filter(ServerStats.server_id == server_id).delete()
+    
+    # 2. 彻底删除服务器本身
+    db.delete(server)
+    db.commit()
+    return {"success": True, "message": "服务器已彻底删除"}
