@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from models.models import Server
 from worker.tasks import start_scheduler
 from models.models import EmailConfig, AlertConfig # 确保导入了这两个模型
+from dotenv import load_dotenv
 import uvicorn
+import os
 
 # 初始化 FastAPI
 app = FastAPI(title="Node Monitor API")
@@ -66,8 +68,13 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
         })
     return result
 
-if __name__ == '__main__':
-    uvicorn.run(app, host="0.0.0.0", port=7980)
+if __name__ == "__main__":
+    import uvicorn
+    # 加载环境变量并获取端口，默认7980
+    load_dotenv()
+    port = int(os.getenv("APP_PORT", 7980))
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
 # --- 增加一个 Pydantic 数据模型用来接收前端传来的表单 ---
 class ServerUpdate(BaseModel):
     hostname: str

@@ -3,40 +3,9 @@
 > vite
 
 
-  VITE v5.4.21  ready in 347 ms
+  VITE v5.4.21  ready in 464 ms
 
   ➜  Local:   http://localhost:3000/
-  ➜  Network: http://192.168.1.24:3000/
+  ➜  Network: http://10.168.100.150:3000/
   ➜  Network: http://172.18.0.1:3000/
-  ➜  Network: http://172.17.0.1:3000/
-11:25:16 AM [vite] hmr update /src/views/Settings.vue
-11:25:16 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/views/Settings.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/views/Settings.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:20 AM [vite] hmr update /src/views/Settings.vue, /src/views/Settings.vue?vue&type=style&index=0&scoped=817427b0&lang.css
-11:25:40 AM [vite] hmr update /src/App.vue
-11:25:40 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:40 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:46 AM [vite] hmr update /src/App.vue, /src/App.vue?vue&type=style&index=0&lang.css
+  ➜  Network: http://172.19.0.1:3000/
