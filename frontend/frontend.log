@@ -3,40 +3,33 @@
 > vite
 
 
-  VITE v5.4.21  ready in 347 ms
+  VITE v5.4.21  ready in 355 ms
 
   ➜  Local:   http://localhost:3000/
   ➜  Network: http://192.168.1.24:3000/
   ➜  Network: http://172.18.0.1:3000/
   ➜  Network: http://172.17.0.1:3000/
-11:25:16 AM [vite] hmr update /src/views/Settings.vue
-11:25:16 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/views/Settings.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/views/Settings.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:20 AM [vite] hmr update /src/views/Settings.vue, /src/views/Settings.vue?vue&type=style&index=0&scoped=817427b0&lang.css
-11:25:40 AM [vite] hmr update /src/App.vue
-11:25:40 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:40 AM [vite] Internal server error: At least one <template> or <script> is required in a single file component. /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-  Plugin: vite:vue
-  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/App.vue
-      at Object.parse$1 [as parse] (/home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vue/compiler-sfc/dist/compiler-sfc.cjs.js:1894:7)
-      at createDescriptor (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:74:43)
-      at handleHotUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/@vitejs/plugin-vue/dist/index.mjs:2155:26)
-      at async handleHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63718:31)
-      at async onHMRUpdate (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63271:9)
-      at async FSWatcher.<anonymous> (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:63303:5)
-11:25:46 AM [vite] hmr update /src/App.vue, /src/App.vue?vue&type=style&index=0&lang.css
+11:28:27 AM [vite] page reload index.html
+7:54:34 PM [vite] hmr update /src/views/BigScreen.vue, /src/views/BigScreen.vue?vue&type=style&index=0&scoped=1ce391e8&lang.css
+7:55:15 PM [vite] Internal server error: Failed to resolve import "../api" from "src/views/BigScreen.vue". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /home/test/Downloads/watch-nanda/monitor_platform/frontend/src/views/BigScreen.vue:160:19
+  1  |  import { ref, reactive, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
+  2  |  import http from '../api'
+     |                    ^
+  3  |  import * as echarts from 'echarts'
+  4  |  
+      at TransformPluginContext._formatError (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49258:41)
+      at TransformPluginContext.error (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49253:16)
+      at normalizeUrl (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64307:23)
+      at async file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64439:39
+      at async Promise.all (index 1)
+      at async TransformPluginContext.transform (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64366:7)
+      at async PluginContainer.transform (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49099:18)
+      at async loadAndTransform (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51978:27)
+      at async viteTransformMiddleware (file:///home/test/Downloads/watch-nanda/monitor_platform/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:62106:24)
+7:55:56 PM [vite] page reload src/views/BigScreen.vue
+8:29:51 PM [vite] hmr update /src/views/BigScreen.vue, /src/views/BigScreen.vue?vue&type=style&index=0&scoped=1ce391e8&lang.css
+8:35:01 PM [vite] hmr update /src/views/BigScreen.vue?vue&type=style&index=0&scoped=1ce391e8&lang.css
+8:41:56 PM [vite] hmr update /src/views/BigScreen.vue?vue&type=style&index=0&scoped=1ce391e8&lang.css, /src/views/BigScreen.vue
+9:00:59 PM [vite] hmr update /src/views/BigScreen.vue

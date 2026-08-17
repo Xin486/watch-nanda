@@ -1,98 +1,182 @@
 <template>
-  <div class="big-screen-layout">
-    <header class="bs-header">
-      <div class="bs-logo">
-        <span class="logo-accent"></span>
-        <h2>{{ companyName || '南大仙林' }} 算力集群指挥大屏</h2>
-      </div>
-      <div class="bs-nav">
-        <router-link to="/dashboard" class="back-btn">⬅ 返回控制台</router-link>
-      </div>
-      <div class="bs-time">
-        <span>{{ totalOnlineServers }} 在线节点 · {{ totalGPUs }} 设备</span>
-        <span class="time-text">{{ currentTime }}</span>
-      </div>
-    </header>
+  <div class="bs-wrap">
+    <!-- 背景装饰层 -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow glow-a"></div>
+    <div class="bg-glow glow-b"></div>
+    <div class="bg-glow glow-c"></div>
+    <div class="scanline"></div>
 
-    <div class="bs-main">
-      <aside class="bs-left">
-        <div class="bs-panel">
-          <div class="panel-title">🎯 算力大盘 GPU分布</div>
-          <div class="big-number">
-            {{ totalGPUs }} <span class="unit">GPUs</span>
+    <div class="bs-layout">
+      <!-- ============ 顶栏 ============ -->
+      <header class="bs-header">
+        <router-link to="/dashboard" class="back-btn">◀ 返回控制台</router-link>
+
+        <div class="header-center">
+          <span class="title-wing wing-left"></span>
+          <div class="title-box">
+            <h1 class="title">{{ companyName || '南大仙林' }}</h1>
+            <p class="subtitle">AI COMPUTE CLUSTER · COMMAND CENTER</p>
           </div>
-          
-          <div class="progress-item mt-4">
-            <div class="prog-label"><span>高负载节点 (>80% CPU)</span><span>{{ highLoadServers.length }}</span></div>
-            <div class="prog-track"><div class="prog-fill bg-orange" :style="{ width: (highLoadServers.length/servers.length)*100 + '%' }"></div></div>
-          </div>
-          
-          <div class="progress-item">
-            <div class="prog-label"><span>闲置节点 (<10% CPU)</span><span>{{ idleServers.length }}</span></div>
-            <div class="prog-track"><div class="prog-fill bg-blue" :style="{ width: (idleServers.length/servers.length)*100 + '%' }"></div></div>
-          </div>
+          <span class="title-wing wing-right"></span>
         </div>
 
-        <div class="bs-panel">
-          <div class="panel-title">🌡️ 集群状态</div>
-          <div class="status-list">
-            <div class="status-row"><span>最高温度</span><span class="val text-orange">{{ maxGpuTemp }}°C</span></div>
-            <div class="status-row"><span>总节点数</span><span class="val">{{ servers.length }}</span></div>
-            <div class="status-row"><span>离线告警</span><span class="val text-red">{{ servers.filter(s=>s.status==='offline').length }}</span></div>
+        <div class="header-right">
+          <span class="live-dot"></span>
+          <div class="datetime">
+            <span class="date">{{ currentDate }}</span>
+            <span class="time">{{ currentTime }}</span>
           </div>
         </div>
-      </aside>
+      </header>
 
-      <section class="bs-center">
-        <div class="bs-panel full-height">
-          <div class="panel-title flex-between">
-            <span>🗄️ 节点分组矩阵 (自动过滤离线)</span>
-            <span class="sub-text">共 {{ Object.keys(matrixData).length }} 个分组</span>
-          </div>
-          
-          <div class="matrix-container">
-            <div class="rack-col" v-for="(groupServers, groupName) in matrixData" :key="groupName">
-              <div class="rack-header">
-                <strong>{{ groupName }}</strong>
-                <span>{{ groupServers.length }} 台</span>
+      <!-- ============ 主体 ============ -->
+      <main class="bs-main">
+        <!-- 左列 -->
+        <aside class="bs-left">
+          <div class="tech-panel">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="panel-head"><i class="ph-ico">🎯</i><h3>算力总览</h3></div>
+
+            <div class="gpu-hero">
+              <div class="gpu-num">{{ gpuCountAnimated }}</div>
+              <div class="gpu-unit">GPUs</div>
+            </div>
+
+            <div class="rate-row">
+              <div class="rate-ring" :style="onlineRateStyle">
+                <div class="rate-inner">
+                  <span class="rate-val">{{ onlineRate }}%</span>
+                  <span class="rate-label">在线率</span>
+                </div>
               </div>
-              <div class="rack-body">
-                <div class="server-block" v-for="s in groupServers" :key="s.id" :class="getLoadLevel(s.cpu_percent)">
-                  <div class="sb-top">
-                    <span class="sb-name" :title="s.hostname">{{ s.hostname }}</span>
-                    <span class="sb-gpu" v-if="s.gpu_data && s.gpu_data.length">{{ s.gpu_data.length }}G</span>
+              <div class="rate-detail">
+                <div class="rate-line"><span>在线节点</span><b class="c-green">{{ onlineCountAnimated }}</b></div>
+                <div class="rate-line"><span>离线节点</span><b class="c-red">{{ offlineCount }}</b></div>
+                <div class="rate-line"><span>总节点数</span><b>{{ servers.length }}</b></div>
+              </div>
+            </div>
+
+            <div class="load-section">
+              <div class="load-item">
+                <div class="load-label"><span>高负载节点 &gt;80%</span><span class="c-orange">{{ highLoadServers.length }}</span></div>
+                <div class="load-bar"><i class="load-fill fill-orange" :style="{ width: pct(highLoadServers.length) }"></i></div>
+              </div>
+              <div class="load-item">
+                <div class="load-label"><span>闲置节点 &lt;10%</span><span class="c-cyan">{{ idleServers.length }}</span></div>
+                <div class="load-bar"><i class="load-fill fill-cyan" :style="{ width: pct(idleServers.length) }"></i></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tech-panel">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="panel-head"><i class="ph-ico">🌡️</i><h3>集群状态</h3></div>
+            <ul class="status-list">
+              <li>
+                <span class="k"><i class="dot-ico i-orange"></i>最高温度</span>
+                <span class="v c-orange">{{ maxGpuTempText }}</span>
+              </li>
+              <li>
+                <span class="k"><i class="dot-ico i-cyan"></i>GPU 设备</span>
+                <span class="v">{{ totalGPUs }} 张</span>
+              </li>
+              <li>
+                <span class="k"><i class="dot-ico i-red"></i>离线告警</span>
+                <span class="v c-red">{{ offlineCount }} 台</span>
+              </li>
+              <li>
+                <span class="k"><i class="dot-ico i-violet"></i>在线分组</span>
+                <span class="v">{{ matrixGroupCount }} 组</span>
+              </li>
+            </ul>
+          </div>
+        </aside>
+
+        <!-- 中列 -->
+        <section class="bs-center">
+          <div class="tech-panel center-panel">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="panel-head head-between">
+              <span class="head-left"><i class="ph-ico">🗄️</i><h3>节点分组矩阵</h3></span>
+              <span class="head-sub">共 {{ matrixGroupCount }} 个分组 · {{ totalOnlineServers }} 在线 · 自动过滤离线</span>
+            </div>
+
+            <div class="matrix-container">
+              <div class="group-section" v-for="(groupServers, groupName) in matrixData" :key="groupName">
+                <div class="group-header">
+                  <span class="gh-line"></span>
+                  <strong>{{ groupName }}</strong>
+                  <span class="gh-count">{{ groupServers.length }} 台</span>
+                </div>
+                <div class="node-grid">
+                  <div class="node-tile" v-for="s in groupServers" :key="s.id" :class="getLoadLevel(s.cpu_percent)" :title="`${s.hostname} · CPU ${s.cpu_percent}%`">
+                    <div class="nt-top">
+                      <span class="nt-name">{{ s.hostname }}</span>
+                      <span class="nt-gpu" v-if="s.gpu_data && s.gpu_data.length">{{ s.gpu_data.length }}G</span>
+                    </div>
+                    <div class="nt-meta">
+                      <span class="nt-cpu">{{ s.cpu_percent }}%</span>
+                      <div class="nt-bar"><i :style="{ width: Math.min(s.cpu_percent, 100) + '%' }"></i></div>
+                    </div>
                   </div>
-                  <div class="sb-bottom">{{ s.cpu_percent }}% CPU</div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <aside class="bs-right">
-        <div class="bs-panel chart-panel">
-          <div class="panel-title">📍 区域分布</div>
-          <div ref="pieChartRef" class="echart-box"></div>
-        </div>
-        
-        <div class="bs-panel alert-panel">
-          <div class="panel-title">🚨 离线告警日志</div>
-          <ul class="alert-list" v-if="offlineServers.length > 0">
-            <li v-for="s in offlineServers" :key="s.id">
-              <span class="dot"></span> {{ s.hostname }} ({{ s.ip_address }}) 连接丢失
-            </li>
-          </ul>
-          <div class="empty-state" v-else>✅ 当前无离线告警</div>
-        </div>
-      </aside>
-    </div>
+        <!-- 右列 -->
+        <aside class="bs-right">
+          <div class="tech-panel chart-panel">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="panel-head"><i class="ph-ico">📍</i><h3>区域分布</h3></div>
+            <div class="pie-wrap">
+              <div ref="pieChartRef" class="echart-box"></div>
+              <div class="pie-center"><span>{{ servers.length }}</span><em>节点</em></div>
+            </div>
+          </div>
 
-    <div class="bs-bottom">
-      <div class="bs-panel bottom-chart-panel">
-        <div class="panel-title">📈 GPU 型号分布</div>
-        <div ref="barChartRef" class="echart-box-horizontal"></div>
-      </div>
+          <div class="tech-panel alert-panel">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="panel-head head-between">
+              <span class="head-left"><i class="ph-ico">🚨</i><h3>离线告警日志</h3></span>
+              <span class="head-sub" :class="{ 'sub-danger': offlineServers.length > 0 }">
+                {{ offlineServers.length > 0 ? offlineServers.length + ' 条告警' : '运行正常' }}
+              </span>
+            </div>
+            <ul class="alert-list" v-if="offlineServers.length > 0">
+              <li v-for="s in offlineServers" :key="s.id">
+                <span class="alert-dot"></span>
+                <div class="alert-body">
+                  <span class="alert-name">{{ s.hostname }}</span>
+                  <span class="alert-ip">{{ s.ip_address }} · 连接丢失</span>
+                </div>
+                <span class="alert-tag">LOST</span>
+              </li>
+            </ul>
+            <div class="empty-state" v-else>✅ 当前无离线告警，集群运行稳定</div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- ============ 底部 ============ -->
+      <footer class="bs-bottom">
+        <div class="tech-panel bottom-panel">
+          <span class="corner tl"></span><span class="corner tr"></span>
+          <span class="corner bl"></span><span class="corner br"></span>
+          <div class="panel-head head-between">
+            <span class="head-left"><i class="ph-ico">📈</i><h3>GPU 型号分布</h3></span>
+            <span class="head-sub">共 {{ totalGPUs }} 张 GPU · {{ gpuModelStats.length }} 种型号</span>
+          </div>
+          <div ref="barChartRef" class="echart-box-horizontal"></div>
+        </div>
+      </footer>
     </div>
   </div>
 </template>
@@ -104,7 +188,8 @@ import * as echarts from 'echarts'
 
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const servers = ref([])
-const currentTime = ref(new Date().toLocaleString('zh-CN'))
+const currentTime = ref('--:--:--')
+const currentDate = ref('')
 let timer = null
 let dataTimer = null
 
@@ -113,20 +198,21 @@ const barChartRef = ref(null)
 const pieChart = shallowRef(null)
 const barChart = shallowRef(null)
 
+// ---------- 数据拉取 ----------
 const fetchServers = async () => {
   try {
     const host = window.location.hostname
     const res = await axios.get(`http://${host}:7980/api/servers`)
     servers.value = res.data
-  } catch (error) { console.error('数据拉取失败') }
+  } catch (error) { console.error('数据拉取失败', error) }
 }
 
-// === 数据计算逻辑 ===
+// ---------- 派生数据 ----------
 const onlineServers = computed(() => servers.value.filter(s => s.status === 'online'))
 const offlineServers = computed(() => servers.value.filter(s => s.status === 'offline'))
 const totalOnlineServers = computed(() => onlineServers.value.length)
+const offlineCount = computed(() => offlineServers.value.length)
 
-// 中间矩阵数据：按 group_name 分组，并且过滤掉离线机器
 const matrixData = computed(() => {
   const groups = {}
   onlineServers.value.forEach(s => {
@@ -136,20 +222,48 @@ const matrixData = computed(() => {
   })
   return groups
 })
+const matrixGroupCount = computed(() => Object.keys(matrixData.value).length)
 
-// 提取所有在线机器的 GPU 数据
-const allGpus = computed(() => {
-  return onlineServers.value.flatMap(s => s.gpu_data || [])
-})
+const allGpus = computed(() => onlineServers.value.flatMap(s => s.gpu_data || []))
 const totalGPUs = computed(() => allGpus.value.length)
+
+const cleanModelName = (m) => {
+  let name = (m || 'Unknown').trim()
+  name = name.replace(/^NVIDIA\s+/i, '').replace(/^GeForce\s+/i, '').replace(/^Tesla\s+/i, '')
+  return name || 'Unknown'
+}
+const gpuModelStats = computed(() => {
+  const counts = {}
+  allGpus.value.forEach(g => {
+    const name = cleanModelName(g.model)
+    counts[name] = (counts[name] || 0) + 1
+  })
+  return Object.entries(counts)
+    .map(([name, count]) => ({ name, count, pct: totalGPUs.value ? Math.round((count / totalGPUs.value) * 100) : 0 }))
+    .sort((a, b) => b.count - a.count)
+})
 
 const maxGpuTemp = computed(() => {
   if (!allGpus.value.length) return '--'
   return Math.max(...allGpus.value.map(g => parseInt(g.temp) || 0))
 })
+const maxGpuTempText = computed(() => maxGpuTemp.value === '--' ? '--' : maxGpuTemp.value + '°C')
 
 const highLoadServers = computed(() => onlineServers.value.filter(s => s.cpu_percent >= 80))
 const idleServers = computed(() => onlineServers.value.filter(s => s.cpu_percent <= 10))
+
+const onlineRate = computed(() => {
+  if (!servers.value.length) return 0
+  return Math.round((totalOnlineServers.value / servers.value.length) * 100)
+})
+const onlineRateStyle = computed(() => ({
+  background: `conic-gradient(#22d3ee ${onlineRate.value * 3.6}deg, rgba(148, 163, 184, 0.12) 0deg)`
+}))
+
+const pct = (n) => {
+  if (!servers.value.length) return '0%'
+  return Math.round((n / servers.value.length) * 100) + '%'
+}
 
 const getLoadLevel = (cpu) => {
   if (cpu >= 80) return 'level-danger'
@@ -157,47 +271,126 @@ const getLoadLevel = (cpu) => {
   return 'level-normal'
 }
 
-// === ECharts 图表渲染 ===
+// ---------- 数字滚动动画 ----------
+function useAnimatedNumber(source) {
+  const display = ref(0)
+  let raf = null
+  watch(source, (val) => {
+    const target = typeof val === 'number' ? val : 0
+    const start = display.value
+    const change = target - start
+    if (change === 0) return
+    const t0 = performance.now()
+    const dur = 700
+    cancelAnimationFrame(raf)
+    const step = (now) => {
+      const p = Math.min((now - t0) / dur, 1)
+      const ease = 1 - Math.pow(1 - p, 3)
+      display.value = Math.round(start + change * ease)
+      if (p < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+  }, { immediate: true })
+  return display
+}
+const gpuCountAnimated = useAnimatedNumber(totalGPUs)
+const onlineCountAnimated = useAnimatedNumber(totalOnlineServers)
+
+// ---------- 图表渲染 ----------
 const renderCharts = () => {
   // 1. 区域分布饼图
   if (!pieChart.value && pieChartRef.value) pieChart.value = echarts.init(pieChartRef.value)
   if (pieChart.value) {
     const groupCounts = Object.entries(matrixData.value).map(([name, list]) => ({ name, value: list.length }))
+    const palette = ['#22d3ee', '#3b82f6', '#8b5cf6', '#f59e0b', '#34d399', '#f87171', '#a78bfa', '#38bdf8']
     pieChart.value.setOption({
-      tooltip: { trigger: 'item' },
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(8, 18, 38, 0.92)',
+        borderColor: 'rgba(34, 211, 238, 0.35)',
+        textStyle: { color: '#dbeafe' }
+      },
+      color: palette,
       series: [{
-        type: 'pie', radius: ['40%', '70%'], avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-        label: { show: false, position: 'center' },
-        emphasis: { label: { show: true, fontSize: 16, fontWeight: 'bold' } },
-        labelLine: { show: false },
+        type: 'pie',
+        radius: ['52%', '74%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderColor: '#0a1428',
+          borderWidth: 2,
+          shadowBlur: 18,
+          shadowColor: 'rgba(34, 211, 238, 0.3)'
+        },
+        label: { show: false },
+        emphasis: {
+          scale: true,
+          label: { show: true, fontSize: 13, fontWeight: 'bold', color: '#fff' },
+          itemStyle: { shadowBlur: 30, shadowColor: 'rgba(34, 211, 238, 0.55)' }
+        },
         data: groupCounts
       }]
     })
   }
 
-  // 2. GPU 型号柱状图
+  // 2. GPU 型号分布柱状图（Top N + 其他）
   if (!barChart.value && barChartRef.value) barChart.value = echarts.init(barChartRef.value)
   if (barChart.value) {
-    const modelCounts = {}
-    allGpus.value.forEach(g => {
-      // 简化型号名称展示，例如从 "NVIDIA GeForce RTX 4090" 提取 "RTX 4090"
-      let name = g.model || 'Unknown'
-      name = name.replace('NVIDIA ', '').replace('GeForce ', '')
-      modelCounts[name] = (modelCounts[name] || 0) + 1
-    })
-    const sortedData = Object.entries(modelCounts).sort((a, b) => a[1] - b[1]) // 升序排列供横向柱状图展示
+    const stats = gpuModelStats.value
+    const TOP = 8
+    let items = stats.slice(0, TOP)
+    if (stats.length > TOP) {
+      const restCount = stats.slice(TOP).reduce((s, e) => s + e.count, 0)
+      items = [...items, { name: '其他型号', count: restCount, pct: totalGPUs.value ? Math.round((restCount / totalGPUs.value) * 100) : 0 }]
+    }
+    const labels = items.map(i => i.name)
+    const values = items.map(i => i.count)
+    const barGradient = new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+      { offset: 0, color: '#0ea5e9' },
+      { offset: 0.6, color: '#22d3ee' },
+      { offset: 1, color: '#67e8f9' }
+    ])
 
     barChart.value.setOption({
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      grid: { left: '2%', right: '4%', bottom: '0%', top: '5%', containLabel: true },
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        backgroundColor: 'rgba(8, 18, 38, 0.92)',
+        borderColor: 'rgba(34, 211, 238, 0.35)',
+        textStyle: { color: '#dbeafe' },
+        formatter: (ps) => {
+          const it = items[ps[0].dataIndex]
+          return `<div style="font-weight:700;margin-bottom:4px;color:#e0f2fe">${it.name}</div><span>${it.count} 张 · 占比 ${it.pct}%</span>`
+        }
+      },
+      grid: { left: '2%', right: '9%', bottom: '0%', top: '4%', containLabel: true },
       xAxis: { type: 'value', show: false },
-      yAxis: { type: 'category', data: sortedData.map(i => i[0]), axisLine: {show: false}, axisTick: {show: false} },
+      yAxis: {
+        type: 'category',
+        inverse: true,
+        data: labels,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: '#a9c8e8', fontSize: 12, margin: 12 }
+      },
       series: [{
         type: 'bar',
-        data: sortedData.map(i => i[1]),
-        label: { show: true, position: 'right' },
-        itemStyle: { color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{offset: 0, color: '#f97316'}, {offset: 1, color: '#fb923c'}]) }
+        data: values,
+        barWidth: 13,
+        showBackground: true,
+        backgroundStyle: { color: 'rgba(148, 163, 184, 0.08)', borderRadius: 7 },
+        label: {
+          show: true, position: 'right', color: '#7dd3fc', fontWeight: 'bold', fontSize: 12,
+          formatter: (p) => `${p.value} 张`
+        },
+        itemStyle: {
+          borderRadius: 7,
+          color: barGradient,
+          shadowBlur: 12,
+          shadowColor: 'rgba(34, 211, 238, 0.35)'
+        }
       }]
     })
   }
@@ -205,10 +398,19 @@ const renderCharts = () => {
 
 watch(servers, () => { nextTick(() => renderCharts()) }, { deep: true })
 
+// ---------- 时钟 ----------
+const week = ['日', '一', '二', '三', '四', '五', '六']
+const tickClock = () => {
+  const d = new Date()
+  currentTime.value = d.toLocaleTimeString('zh-CN', { hour12: false })
+  currentDate.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} 星期${week[d.getDay()]}`
+}
+
 onMounted(() => {
   fetchServers()
+  tickClock()
   dataTimer = setInterval(fetchServers, 60000)
-  timer = setInterval(() => { currentTime.value = new Date().toLocaleString('zh-CN') }, 1000)
+  timer = setInterval(tickClock, 1000)
   window.addEventListener('resize', () => { pieChart.value?.resize(); barChart.value?.resize() })
 })
 
@@ -219,74 +421,218 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 全局布局重置：模仿 IDC 大屏专属样式 (浅色现代风) */
-.big-screen-layout { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #f4f6f8; z-index: 9999; display: flex; flex-direction: column; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+/* ==================== 全局 ==================== */
+.bs-wrap {
+  position: fixed; inset: 0; overflow: hidden;
+  background: radial-gradient(1200px 620px at 50% -12%, #0d1b33 0%, #060a18 55%, #03050c 100%);
+  color: #dbeafe;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+}
+.bs-layout { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column; }
 
-/* 顶栏 */
-.bs-header { height: 60px; background: #fff; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
-.bs-logo { display: flex; align-items: center; gap: 10px; }
-.logo-accent { width: 16px; height: 16px; background: linear-gradient(135deg, #f97316, #ea580c); border-radius: 4px; }
-.bs-logo h2 { margin: 0; font-size: 18px; color: #1e293b; font-weight: 800; letter-spacing: 1px; }
-.back-btn { text-decoration: none; background: #f1f5f9; color: #475569; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: bold; transition: 0.2s; border: 1px solid #e2e8f0; }
-.back-btn:hover { background: #e2e8f0; color: #0f172a; }
-.bs-time { display: flex; align-items: center; gap: 15px; font-size: 13px; color: #64748b; font-weight: bold; }
-.time-text { color: #0f172a; font-family: monospace; font-size: 15px; }
+/* ---- 背景装饰 ---- */
+.bg-grid {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(120% 90% at 50% 40%, #000 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 40%, #000 40%, transparent 100%);
+}
+.bg-glow { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .5; z-index: 0; pointer-events: none; }
+.glow-a { width: 440px; height: 440px; background: radial-gradient(circle, rgba(34, 211, 238, .28), transparent 70%); top: -90px; left: -70px; animation: float 12s ease-in-out infinite; }
+.glow-b { width: 520px; height: 520px; background: radial-gradient(circle, rgba(99, 102, 241, .26), transparent 70%); bottom: -120px; right: -80px; animation: float 15s ease-in-out infinite reverse; }
+.glow-c { width: 320px; height: 320px; background: radial-gradient(circle, rgba(245, 158, 11, .16), transparent 70%); top: 40%; left: 46%; animation: float 18s ease-in-out infinite; }
+.scanline {
+  position: absolute; left: 0; right: 0; top: 0; height: 140px; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(34, 211, 238, .05), transparent);
+  animation: scan 9s linear infinite;
+}
+@keyframes scan { 0% { transform: translateY(-140px); } 100% { transform: translateY(100vh); } }
+@keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, 22px); } }
 
-/* 主体网格 */
-.bs-main { flex: 1; display: grid; grid-template-columns: 280px 1fr 300px; gap: 16px; padding: 16px; overflow: hidden; }
-.bs-panel { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.03); display: flex; flex-direction: column; margin-bottom: 16px; }
-.bs-panel:last-child { margin-bottom: 0; }
-.full-height { height: 100%; margin-bottom: 0; }
-.panel-title { font-size: 14px; font-weight: bold; color: #334155; margin-bottom: 15px; display: flex; align-items: center; }
-.flex-between { justify-content: space-between; }
-.sub-text { font-size: 12px; color: #94a3b8; font-weight: normal; }
+/* ==================== 顶栏 ==================== */
+.bs-header {
+  height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(13, 25, 48, .92), rgba(8, 14, 30, .5));
+  border-bottom: 1px solid rgba(56, 189, 248, .2);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, .5);
+  position: relative;
+}
+.bs-header::after {
+  content: ''; position: absolute; left: 0; bottom: -1px; height: 2px; width: 100%;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, .7), transparent);
+}
+.back-btn {
+  text-decoration: none; color: #7dd3fc; font-size: 13px; font-weight: 600; letter-spacing: 1px;
+  padding: 8px 16px; border: 1px solid rgba(34, 211, 238, .35); border-radius: 6px;
+  background: rgba(34, 211, 238, .06); transition: .25s;
+}
+.back-btn:hover { background: rgba(34, 211, 238, .16); color: #e0f2fe; box-shadow: 0 0 16px rgba(34, 211, 238, .35); }
 
-/* 左侧统计 */
-.big-number { font-size: 36px; font-weight: 900; color: #0f172a; border-bottom: 1px solid #f1f5f9; padding-bottom: 15px; }
-.unit { font-size: 14px; color: #64748b; font-weight: bold; }
-.progress-item { margin-top: 15px; }
-.prog-label { display: flex; justify-content: space-between; font-size: 12px; color: #475569; margin-bottom: 6px; }
-.prog-track { height: 6px; background: #f1f5f9; border-radius: 3px; overflow: hidden; }
-.prog-fill { height: 100%; transition: width 0.5s; }
-.bg-orange { background: #f97316; }
-.bg-blue { background: #3b82f6; }
-.status-list { display: flex; flex-direction: column; gap: 12px; }
-.status-row { display: flex; justify-content: space-between; font-size: 13px; color: #475569; padding: 8px 0; border-bottom: 1px dashed #f1f5f9; }
-.status-row .val { font-weight: bold; color: #0f172a; }
-.text-orange { color: #ea580c !important; }
-.text-red { color: #ef4444 !important; }
+.header-center { display: flex; align-items: center; gap: 18px; }
+.title-wing { display: inline-block; width: 90px; height: 2px; background: linear-gradient(90deg, transparent, #22d3ee); position: relative; }
+.title-wing::after { content: ''; position: absolute; right: 0; top: -3px; width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; box-shadow: 0 0 10px #22d3ee; }
+.wing-right { transform: scaleX(-1); }
+.title-box { text-align: center; }
+.title {
+  margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 3px;
+  background: linear-gradient(90deg, #7dd3fc, #ffffff, #7dd3fc);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 30px rgba(34, 211, 238, .4);
+}
+.subtitle { margin: 2px 0 0; font-size: 11px; letter-spacing: 4px; color: #4b8bb8; font-weight: 600; }
 
-/* 👑 中间机柜矩阵 (核心视图重构) */
-.matrix-container { flex: 1; display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
-/* 自定义滚动条 */
-.matrix-container::-webkit-scrollbar { height: 8px; }
-.matrix-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-.rack-col { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; min-width: 160px; max-width: 180px; flex-shrink: 0; display: flex; flex-direction: column; }
-.rack-header { padding: 10px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1e293b; background: #f1f5f9; border-radius: 6px 6px 0 0; }
-.rack-header span { font-size: 11px; color: #64748b; background: #fff; padding: 2px 6px; border-radius: 10px; border: 1px solid #e2e8f0; }
-.rack-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: calc(100vh - 180px); }
+.header-right { display: flex; align-items: center; gap: 14px; }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; animation: pulse 1.6s ease-in-out infinite; }
+.datetime { display: flex; flex-direction: column; align-items: flex-end; }
+.date { font-size: 11px; color: #7dd3fc; letter-spacing: 1px; }
+.time { font-size: 22px; font-weight: 700; font-family: "SFMono-Regular", Consolas, monospace; color: #e0f2fe; text-shadow: 0 0 14px rgba(34, 211, 238, .5); }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.8); } }
 
-/* 服务器小区块 */
-.server-block { border: 1px solid transparent; border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 4px; transition: 0.2s; }
-.sb-top { display: flex; justify-content: space-between; align-items: center; }
-.sb-name { font-size: 12px; font-weight: bold; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; }
-.sb-gpu { font-size: 10px; background: rgba(255,255,255,0.8); padding: 1px 4px; border-radius: 3px; font-weight: bold; color: #0f172a; }
-.sb-bottom { font-size: 11px; font-family: monospace; }
-/* 颜色梯队映射 */
-.level-normal { background: #ecfdf5; border-color: #a7f3d0; } .level-normal .sb-bottom { color: #059669; }
-.level-warning { background: #fffbeb; border-color: #fde68a; } .level-warning .sb-bottom { color: #d97706; }
-.level-danger { background: #fef2f2; border-color: #fecaca; } .level-danger .sb-bottom { color: #dc2626; }
+/* ==================== 主体布局 ==================== */
+.bs-main { flex: 1; display: grid; grid-template-columns: 300px 1fr 320px; gap: 14px; padding: 14px 16px; min-height: 0; overflow: hidden; }
+.bs-left, .bs-right { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: hidden; }
+.bs-center { min-width: 0; min-height: 0; display: flex; }
+.bs-bottom { height: 216px; padding: 0 16px 14px; flex-shrink: 0; }
 
-/* 右侧与底部图表 */
-.chart-panel { height: 260px; }
-.alert-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+/* ==================== 科技面板 ==================== */
+.tech-panel {
+  position: relative;
+  background: linear-gradient(160deg, rgba(21, 40, 74, .72), rgba(8, 16, 34, .85));
+  border: 1px solid rgba(56, 189, 248, .18);
+  border-radius: 6px; padding: 14px 16px;
+  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 32px rgba(34, 211, 238, .05), 0 6px 22px rgba(0, 0, 0, .45);
+}
+.corner { position: absolute; width: 14px; height: 14px; border: 2px solid #22d3ee; opacity: .9; filter: drop-shadow(0 0 4px rgba(34, 211, 238, .6)); }
+.corner.tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+.corner.tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+.corner.bl { bottom: -2px; left: -2px; border-right: none; border-top: none; }
+.corner.br { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+
+.panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 9px; border-bottom: 1px solid rgba(56, 189, 248, .12); position: relative; }
+.panel-head::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 46px; height: 2px; background: linear-gradient(90deg, #22d3ee, transparent); }
+.panel-head h3 { margin: 0; font-size: 14px; color: #c7e7ff; letter-spacing: 1px; font-weight: 600; }
+.ph-ico { font-style: normal; font-size: 15px; }
+.head-between { justify-content: space-between; }
+.head-left { display: flex; align-items: center; gap: 8px; }
+.head-sub { font-size: 11px; color: #4b8bb8; letter-spacing: 1px; }
+.head-sub.sub-danger { color: #f87171; }
+
+/* ==================== 左列：算力总览 ==================== */
+.gpu-hero { display: flex; align-items: baseline; justify-content: center; gap: 8px; padding: 8px 0 16px; }
+.gpu-num {
+  font-size: 58px; font-weight: 900; line-height: 1; font-family: "SFMono-Regular", Consolas, monospace;
+  background: linear-gradient(180deg, #e0f2fe, #22d3ee);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 18px rgba(34, 211, 238, .5));
+  animation: glow-num 3s ease-in-out infinite;
+}
+.gpu-unit { font-size: 15px; color: #7dd3fc; font-weight: 700; letter-spacing: 1px; }
+@keyframes glow-num { 0%, 100% { filter: drop-shadow(0 0 12px rgba(34, 211, 238, .4)); } 50% { filter: drop-shadow(0 0 26px rgba(34, 211, 238, .75)); } }
+
+.rate-row { display: flex; align-items: center; gap: 18px; padding: 8px 4px; }
+.rate-ring { width: 92px; height: 92px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; filter: drop-shadow(0 0 10px rgba(34, 211, 238, .35)); }
+.rate-inner { width: 72px; height: 72px; border-radius: 50%; background: #0a1428; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.rate-val { font-size: 20px; font-weight: 800; color: #7dd3fc; }
+.rate-label { font-size: 10px; color: #4b8bb8; letter-spacing: 1px; }
+.rate-detail { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.rate-line { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #8fb3d0; }
+.rate-line b { font-size: 16px; font-family: "SFMono-Regular", Consolas, monospace; }
+.c-green { color: #34d399; }
+.c-red { color: #f87171; }
+.c-orange { color: #fbbf24; }
+.c-cyan { color: #22d3ee; }
+
+.load-section { margin-top: 10px; display: flex; flex-direction: column; gap: 14px; }
+.load-label { display: flex; justify-content: space-between; font-size: 12px; color: #8fb3d0; margin-bottom: 6px; }
+.load-bar { height: 6px; background: rgba(148, 163, 184, .12); border-radius: 3px; overflow: hidden; }
+.load-fill { display: block; height: 100%; border-radius: 3px; transition: width .6s; position: relative; }
+.load-fill::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .5), transparent); animation: shimmer 2.4s infinite; }
+.fill-orange { background: linear-gradient(90deg, #f97316, #fbbf24); box-shadow: 0 0 10px rgba(251, 191, 36, .5); }
+.fill-cyan { background: linear-gradient(90deg, #0ea5e9, #22d3ee); box-shadow: 0 0 10px rgba(34, 211, 238, .5); }
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+/* ==================== 左列：集群状态 ==================== */
+.status-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.status-list li { display: flex; justify-content: space-between; align-items: center; padding: 11px 6px; border-bottom: 1px dashed rgba(56, 189, 248, .1); }
+.status-list li:last-child { border-bottom: none; }
+.status-list .k { font-size: 13px; color: #8fb3d0; display: flex; align-items: center; gap: 8px; }
+.status-list .v { font-size: 16px; font-weight: 800; font-family: "SFMono-Regular", Consolas, monospace; color: #e0f2fe; }
+.dot-ico { width: 8px; height: 8px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; }
+.i-orange { background: #fbbf24; color: #fbbf24; }
+.i-cyan { background: #22d3ee; color: #22d3ee; }
+.i-red { background: #f87171; color: #f87171; }
+.i-violet { background: #8b5cf6; color: #8b5cf6; }
+
+/* ==================== 中列：节点分组矩阵 ==================== */
+.center-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.matrix-container {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 2px 4px 10px 2px;
+}
+.matrix-container::-webkit-scrollbar { width: 8px; }
+.matrix-container::-webkit-scrollbar-track { background: rgba(148, 163, 184, .06); border-radius: 4px; }
+.matrix-container::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, .35); border-radius: 4px; }
+
+.group-section { margin-bottom: 14px; }
+.group-section:last-child { margin-bottom: 0; }
+.group-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gh-line { width: 3px; height: 14px; border-radius: 2px; background: linear-gradient(180deg, #22d3ee, transparent); box-shadow: 0 0 8px #22d3ee; flex-shrink: 0; }
+.group-header strong { font-size: 14px; color: #c7e7ff; letter-spacing: 1px; font-weight: 700; }
+.gh-count { font-size: 11px; color: #4b8bb8; background: rgba(34, 211, 238, .1); padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(34, 211, 238, .2); }
+
+.node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+
+.node-tile { border: 1px solid transparent; border-radius: 4px; padding: 7px 9px; display: flex; flex-direction: column; gap: 5px; transition: .2s; position: relative; overflow: hidden; }
+.node-tile::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.node-tile:hover { transform: translateY(-1px); filter: brightness(1.15); }
+.nt-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.nt-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: #dbeafe; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nt-gpu { flex-shrink: 0; font-size: 10px; background: rgba(34, 211, 238, .15); padding: 1px 5px; border-radius: 3px; font-weight: 700; color: #7dd3fc; border: 1px solid rgba(34, 211, 238, .3); }
+.nt-meta { display: flex; align-items: center; gap: 6px; }
+.nt-cpu { min-width: 34px; font-size: 11px; font-weight: 700; font-family: "SFMono-Regular", Consolas, monospace; }
+.nt-bar { flex: 1; height: 3px; background: rgba(148, 163, 184, .15); border-radius: 2px; overflow: hidden; }
+.nt-bar i { display: block; height: 100%; border-radius: 2px; }
+
+.level-normal { background: rgba(16, 185, 129, .1); border-color: rgba(16, 185, 129, .32); }
+.level-normal::before { background: #34d399; box-shadow: 0 0 8px #34d399; }
+.level-normal .nt-cpu { color: #6ee7b7; }
+.level-normal .nt-bar i { background: #34d399; }
+.level-warning { background: rgba(245, 158, 11, .1); border-color: rgba(245, 158, 11, .32); }
+.level-warning::before { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+.level-warning .nt-cpu { color: #fcd34d; }
+.level-warning .nt-bar i { background: #fbbf24; }
+.level-danger { background: rgba(239, 68, 68, .13); border-color: rgba(239, 68, 68, .4); }
+.level-danger::before { background: #f87171; box-shadow: 0 0 8px #f87171; }
+.level-danger .nt-cpu { color: #fca5a5; }
+.level-danger .nt-bar i { background: #f87171; }
+
+/* ==================== 右列：饼图 ==================== */
+.chart-panel { height: 300px; flex-shrink: 0; }
+.pie-wrap { position: relative; height: 236px; }
 .echart-box { width: 100%; height: 100%; }
-.alert-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; font-size: 12px; color: #ef4444; }
-.alert-list li { margin-bottom: 8px; padding: 8px; background: #fef2f2; border-radius: 4px; display: flex; align-items: center; gap: 6px; }
-.dot { width: 6px; height: 6px; background: #ef4444; border-radius: 50%; }
-.empty-state { text-align: center; color: #10b981; font-weight: bold; margin-top: 20px; font-size: 13px; }
+.pie-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+.pie-center span { display: block; font-size: 26px; font-weight: 800; color: #e0f2fe; font-family: "SFMono-Regular", Consolas, monospace; text-shadow: 0 0 12px rgba(34, 211, 238, .5); }
+.pie-center em { font-style: normal; font-size: 11px; color: #4b8bb8; letter-spacing: 1px; }
 
-.bs-bottom { padding: 0 16px 16px 16px; height: 240px; }
-.bottom-chart-panel { height: 100%; margin: 0; }
-.echart-box-horizontal { width: 100%; height: 100%; }
+/* ==================== 右列：告警日志 ==================== */
+.alert-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.alert-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.alert-list::-webkit-scrollbar { width: 6px; }
+.alert-list::-webkit-scrollbar-thumb { background: rgba(239, 68, 68, .35); border-radius: 3px; }
+.alert-list li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: rgba(239, 68, 68, .08); border: 1px solid rgba(239, 68, 68, .25); border-radius: 5px; }
+.alert-dot { width: 8px; height: 8px; border-radius: 50%; background: #f87171; box-shadow: 0 0 10px #f87171; animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+.alert-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.alert-name { font-size: 13px; font-weight: 700; color: #fca5a5; }
+.alert-ip { font-size: 11px; color: #b0898f; font-family: "SFMono-Regular", Consolas, monospace; }
+.alert-tag { font-size: 10px; font-weight: 800; color: #f87171; border: 1px solid rgba(239, 68, 68, .4); padding: 2px 6px; border-radius: 3px; letter-spacing: 1px; }
+.empty-state { text-align: center; color: #34d399; font-weight: 600; margin-top: 26px; font-size: 13px; }
+
+/* ==================== 底部：柱状图 ==================== */
+.bottom-panel { height: 100%; display: flex; flex-direction: column; }
+.echart-box-horizontal { flex: 1; width: 100%; }
 </style>
