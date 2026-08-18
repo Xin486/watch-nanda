@@ -22,6 +22,13 @@
         </div>
 
         <div class="header-right">
+          <div class="weather" v-if="weather" :title="`${weather.city || '当前位置'} · ${weather.desc} ${weather.high}°/${weather.low}°`">
+            <span class="weather-icon">{{ weather.icon }}</span>
+            <div class="weather-info">
+              <span class="weather-temp">{{ weather.temp }}<em>°C</em></span>
+              <span class="weather-desc">{{ weather.city || '当前位置' }} · {{ weather.desc }}</span>
+            </div>
+          </div>
           <span class="live-dot"></span>
           <div class="datetime">
             <span class="date">{{ currentDate }}</span>
@@ -131,14 +138,27 @@
 
         <!-- 右列 -->
         <aside class="bs-right">
-          <div class="tech-panel chart-panel">
+          <div class="tech-panel rank-panel">
             <span class="corner tl"></span><span class="corner tr"></span>
             <span class="corner bl"></span><span class="corner br"></span>
-            <div class="panel-head"><i class="ph-ico">📍</i><h3>区域分布</h3></div>
-            <div class="pie-wrap">
-              <div ref="pieChartRef" class="echart-box"></div>
-              <div class="pie-center"><span>{{ servers.length }}</span><em>节点</em></div>
+            <div class="panel-head head-between">
+              <span class="head-left"><i class="ph-ico">🏆</i><h3>区域占用排行</h3></span>
+              <span class="head-sub">CPU 占用 · {{ rankedServers.length }} 台在线</span>
             </div>
+            <ul class="rank-list" v-if="rankedServers.length">
+              <li v-for="(s, i) in rankedServers" :key="s.id">
+                <span class="rank-no" :class="'rank-' + (i + 1)">{{ i + 1 }}</span>
+                <div class="rank-body">
+                  <div class="rank-top">
+                    <span class="rank-name" :title="s.hostname">{{ s.hostname }}</span>
+                    <span class="rank-group">{{ s.group_name || '未分组' }}</span>
+                  </div>
+                  <div class="rank-bar"><i :class="rankBarClass(s.cpu_percent)" :style="{ width: Math.min(s.cpu_percent, 100) + '%' }"></i></div>
+                </div>
+                <span class="rank-val" :class="rankValClass(s.cpu_percent)">{{ Math.round(s.cpu_percent || 0) }}%</span>
+              </li>
+            </ul>
+            <div class="empty-state" v-else>暂无在线节点数据</div>
           </div>
 
           <div class="tech-panel alert-panel">
@@ -182,9 +202,10 @@
 </template>
 
 <script setup>
+// 算力大屏：科技风全景监控（分组矩阵 / 区域占用排行 / 告警日志 / GPU 型号分布 / 天气）
 import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
-import axios from 'axios'
 import * as echarts from 'echarts'
+import { api } from '../api'
 
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const servers = ref([])
@@ -193,18 +214,95 @@ const currentDate = ref('')
 let timer = null
 let dataTimer = null
 
-const pieChartRef = ref(null)
 const barChartRef = ref(null)
-const pieChart = shallowRef(null)
 const barChart = shallowRef(null)
+
+// 天气
+const weather = ref(null)
 
 // ---------- 数据拉取 ----------
 const fetchServers = async () => {
   try {
-    const host = window.location.hostname
-    const res = await axios.get(`http://${host}:7980/api/servers`)
+    const res = await api.getServers()
     servers.value = res.data
   } catch (error) { console.error('数据拉取失败', error) }
+}
+
+// ---------- 天气（Open-Meteo，自动定位） ----------
+const WEATHER_CODES = {
+  0: { icon: '☀️', desc: '晴' },
+  1: { icon: '🌤️', desc: '大致晴朗' },
+  2: { icon: '⛅', desc: '多云' },
+  3: { icon: '☁️', desc: '阴' },
+  45: { icon: '🌫️', desc: '雾' },
+  48: { icon: '🌫️', desc: '雾凇' },
+  51: { icon: '🌦️', desc: '小毛毛雨' },
+  53: { icon: '🌦️', desc: '毛毛雨' },
+  55: { icon: '🌧️', desc: '大毛毛雨' },
+  61: { icon: '🌧️', desc: '小雨' },
+  63: { icon: '🌧️', desc: '中雨' },
+  65: { icon: '🌧️', desc: '大雨' },
+  66: { icon: '🌧️', desc: '冻雨' },
+  67: { icon: '🌧️', desc: '冻雨' },
+  71: { icon: '🌨️', desc: '小雪' },
+  73: { icon: '🌨️', desc: '中雪' },
+  75: { icon: '❄️', desc: '大雪' },
+  77: { icon: '❄️', desc: '雪粒' },
+  80: { icon: '🌦️', desc: '阵雨' },
+  81: { icon: '🌧️', desc: '强阵雨' },
+  82: { icon: '⛈️', desc: '强阵雨' },
+  85: { icon: '🌨️', desc: '阵雪' },
+  86: { icon: '🌨️', desc: '强阵雪' },
+  95: { icon: '⛈️', desc: '雷雨' },
+  96: { icon: '⛈️', desc: '雷雨冰雹' },
+  99: { icon: '⛈️', desc: '强雷雨冰雹' }
+}
+const decodeWeather = (code) => WEATHER_CODES[code] || { icon: '🌡️', desc: '未知' }
+
+const locateUser = async () => {
+  let coords = null
+  // 1. 优先浏览器精确定位（坐标最准）
+  try {
+    if (navigator.geolocation) {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 6000, maximumAge: 600000 })
+      })
+      coords = { lat: Number(pos.coords.latitude.toFixed(4)), lon: Number(pos.coords.longitude.toFixed(4)) }
+    }
+  } catch (e) {}
+  // 2. IP 定位（拿城市名，兼作坐标兜底）
+  const providers = ['https://ipwho.is/', 'https://ipapi.co/json/']
+  for (const url of providers) {
+    try {
+      const r = await fetch(url)
+      const d = await r.json()
+      if (d.latitude && d.longitude) {
+        const city = d.city || d.region || null
+        if (!coords) coords = { lat: Number(d.latitude.toFixed(4)), lon: Number(d.longitude.toFixed(4)) }
+        return { ...coords, city }
+      }
+    } catch (e) {}
+  }
+  return coords ? { ...coords, city: null } : null
+}
+
+const fetchWeather = async () => {
+  try {
+    const pos = await locateUser()
+    if (!pos) return
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${pos.lat}&longitude=${pos.lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1`
+    const res = await fetch(url)
+    const data = await res.json()
+    const w = decodeWeather(data.current.weather_code)
+    weather.value = {
+      icon: w.icon,
+      desc: w.desc,
+      temp: Math.round(data.current.temperature_2m),
+      high: Math.round(data.daily.temperature_2m_max[0]),
+      low: Math.round(data.daily.temperature_2m_min[0]),
+      city: pos.city
+    }
+  } catch (e) { console.error('天气获取失败', e) }
 }
 
 // ---------- 派生数据 ----------
@@ -223,6 +321,24 @@ const matrixData = computed(() => {
   return groups
 })
 const matrixGroupCount = computed(() => Object.keys(matrixData.value).length)
+
+// 区域占用排行：在线节点按 CPU 占用率降序
+const rankedServers = computed(() => {
+  return onlineServers.value
+    .slice()
+    .sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0))
+})
+
+const rankBarClass = (cpu) => {
+  if (cpu >= 80) return 'bar-danger'
+  if (cpu >= 40) return 'bar-warning'
+  return 'bar-normal'
+}
+const rankValClass = (cpu) => {
+  if (cpu >= 80) return 'val-danger'
+  if (cpu >= 40) return 'val-warning'
+  return 'val-normal'
+}
 
 const allGpus = computed(() => onlineServers.value.flatMap(s => s.gpu_data || []))
 const totalGPUs = computed(() => allGpus.value.length)
@@ -298,43 +414,7 @@ const onlineCountAnimated = useAnimatedNumber(totalOnlineServers)
 
 // ---------- 图表渲染 ----------
 const renderCharts = () => {
-  // 1. 区域分布饼图
-  if (!pieChart.value && pieChartRef.value) pieChart.value = echarts.init(pieChartRef.value)
-  if (pieChart.value) {
-    const groupCounts = Object.entries(matrixData.value).map(([name, list]) => ({ name, value: list.length }))
-    const palette = ['#22d3ee', '#3b82f6', '#8b5cf6', '#f59e0b', '#34d399', '#f87171', '#a78bfa', '#38bdf8']
-    pieChart.value.setOption({
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'item',
-        backgroundColor: 'rgba(8, 18, 38, 0.92)',
-        borderColor: 'rgba(34, 211, 238, 0.35)',
-        textStyle: { color: '#dbeafe' }
-      },
-      color: palette,
-      series: [{
-        type: 'pie',
-        radius: ['52%', '74%'],
-        center: ['50%', '50%'],
-        avoidLabelOverlap: false,
-        itemStyle: {
-          borderColor: '#0a1428',
-          borderWidth: 2,
-          shadowBlur: 18,
-          shadowColor: 'rgba(34, 211, 238, 0.3)'
-        },
-        label: { show: false },
-        emphasis: {
-          scale: true,
-          label: { show: true, fontSize: 13, fontWeight: 'bold', color: '#fff' },
-          itemStyle: { shadowBlur: 30, shadowColor: 'rgba(34, 211, 238, 0.55)' }
-        },
-        data: groupCounts
-      }]
-    })
-  }
-
-  // 2. GPU 型号分布柱状图（Top N + 其他）
+  // GPU 型号分布柱状图（Top N + 其他）
   if (!barChart.value && barChartRef.value) barChart.value = echarts.init(barChartRef.value)
   if (barChart.value) {
     const stats = gpuModelStats.value
@@ -408,15 +488,16 @@ const tickClock = () => {
 
 onMounted(() => {
   fetchServers()
+  fetchWeather()
   tickClock()
   dataTimer = setInterval(fetchServers, 60000)
   timer = setInterval(tickClock, 1000)
-  window.addEventListener('resize', () => { pieChart.value?.resize(); barChart.value?.resize() })
+  window.addEventListener('resize', () => { barChart.value?.resize() })
 })
 
 onUnmounted(() => {
   clearInterval(timer); clearInterval(dataTimer)
-  pieChart.value?.dispose(); barChart.value?.dispose()
+  barChart.value?.dispose()
 })
 </script>
 
@@ -485,6 +566,12 @@ onUnmounted(() => {
 .subtitle { margin: 2px 0 0; font-size: 11px; letter-spacing: 4px; color: #4b8bb8; font-weight: 600; }
 
 .header-right { display: flex; align-items: center; gap: 14px; }
+.weather { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid rgba(34, 211, 238, .25); border-radius: 6px; background: rgba(34, 211, 238, .06); }
+.weather-icon { font-size: 22px; line-height: 1; }
+.weather-info { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.weather-temp { font-size: 18px; font-weight: 800; color: #e0f2fe; font-family: "SFMono-Regular", Consolas, monospace; text-shadow: 0 0 10px rgba(34, 211, 238, .4); }
+.weather-temp em { font-style: normal; font-size: 11px; color: #7dd3fc; margin-left: 1px; }
+.weather-desc { font-size: 10px; color: #7dd3fc; letter-spacing: 1px; }
 .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; animation: pulse 1.6s ease-in-out infinite; }
 .datetime { display: flex; flex-direction: column; align-items: flex-end; }
 .date { font-size: 11px; color: #7dd3fc; letter-spacing: 1px; }
@@ -611,13 +698,30 @@ onUnmounted(() => {
 .level-danger .nt-cpu { color: #fca5a5; }
 .level-danger .nt-bar i { background: #f87171; }
 
-/* ==================== 右列：饼图 ==================== */
-.chart-panel { height: 300px; flex-shrink: 0; }
-.pie-wrap { position: relative; height: 236px; }
-.echart-box { width: 100%; height: 100%; }
-.pie-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
-.pie-center span { display: block; font-size: 26px; font-weight: 800; color: #e0f2fe; font-family: "SFMono-Regular", Consolas, monospace; text-shadow: 0 0 12px rgba(34, 211, 238, .5); }
-.pie-center em { font-style: normal; font-size: 11px; color: #4b8bb8; letter-spacing: 1px; }
+/* ==================== 右列：区域占用排行 ==================== */
+.rank-panel { height: 300px; flex-shrink: 0; display: flex; flex-direction: column; }
+.rank-list { list-style: none; margin: 0; padding: 0; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.rank-list::-webkit-scrollbar { width: 6px; }
+.rank-list::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, .35); border-radius: 3px; }
+.rank-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(34, 211, 238, .05); border: 1px solid rgba(56, 189, 248, .14); border-radius: 5px; transition: .2s; }
+.rank-list li:hover { background: rgba(34, 211, 238, .1); border-color: rgba(34, 211, 238, .3); }
+.rank-no { width: 22px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; font-family: "SFMono-Regular", Consolas, monospace; background: rgba(148, 163, 184, .15); color: #8fb3d0; flex-shrink: 0; }
+.rank-no.rank-1 { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #0a1428; box-shadow: 0 0 10px rgba(251, 191, 36, .5); }
+.rank-no.rank-2 { background: linear-gradient(135deg, #e2e8f0, #94a3b8); color: #0a1428; box-shadow: 0 0 8px rgba(226, 232, 240, .4); }
+.rank-no.rank-3 { background: linear-gradient(135deg, #f59e0b, #b45309); color: #0a1428; box-shadow: 0 0 8px rgba(245, 158, 11, .4); }
+.rank-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.rank-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rank-name { font-size: 13px; font-weight: 700; color: #dbeafe; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-group { flex-shrink: 0; font-size: 10px; color: #7dd3fc; background: rgba(34, 211, 238, .12); padding: 1px 6px; border-radius: 8px; border: 1px solid rgba(34, 211, 238, .25); }
+.rank-bar { height: 5px; background: rgba(148, 163, 184, .15); border-radius: 3px; overflow: hidden; }
+.rank-bar i { display: block; height: 100%; border-radius: 3px; transition: width .6s; }
+.bar-normal { background: linear-gradient(90deg, #10b981, #34d399); box-shadow: 0 0 8px rgba(52, 211, 153, .4); }
+.bar-warning { background: linear-gradient(90deg, #f59e0b, #fbbf24); box-shadow: 0 0 8px rgba(251, 191, 36, .4); }
+.bar-danger { background: linear-gradient(90deg, #ef4444, #f87171); box-shadow: 0 0 8px rgba(248, 113, 113, .5); }
+.rank-val { min-width: 44px; text-align: right; font-size: 15px; font-weight: 800; font-family: "SFMono-Regular", Consolas, monospace; flex-shrink: 0; }
+.val-normal { color: #34d399; }
+.val-warning { color: #fbbf24; }
+.val-danger { color: #f87171; }
 
 /* ==================== 右列：告警日志 ==================== */
 .alert-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
