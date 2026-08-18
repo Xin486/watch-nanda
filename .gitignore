@@ -14,6 +14,11 @@ env/
 .env
 .env.local
 
+# 运行时产物（日志、调度残留文件）
+*.log
+nohup.out
+celerybeat-schedule
+
 # 编辑器及系统文件
 .vscode/
 .idea/

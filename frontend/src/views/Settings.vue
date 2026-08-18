@@ -69,10 +69,10 @@
 </template>
 
 <script setup>
+// 设置页：系统标题 / 告警规则 / SMTP 发件配置
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '../api'
 
-const host = window.location.hostname
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const pageTitle = ref(localStorage.getItem('pageTitle') || 'Node Monitor')
 
@@ -82,10 +82,10 @@ const isTesting = ref(false)
 
 const loadConfigs = async () => {
   try {
-    const resAlert = await axios.get(`http://${host}:7980/api/settings/alert`)
+    const resAlert = await api.getAlertSettings()
     if (resAlert.data) alertForm.value = resAlert.data
-    
-    const resEmail = await axios.get(`http://${host}:7980/api/settings/email`)
+
+    const resEmail = await api.getEmailSettings()
     if (resEmail.data) emailForm.value = resEmail.data
   } catch (error) { console.error('加载配置失败') }
 }
@@ -105,14 +105,14 @@ const saveBaseSettings = () => {
 
 const saveAlertSettings = async () => {
   try {
-    await axios.post(`http://${host}:7980/api/settings/alert`, alertForm.value)
+    await api.saveAlertSettings(alertForm.value)
     alert('✅ 告警规则已保存')
   } catch (e) { alert('保存失败') }
 }
 
 const saveEmailSettings = async () => {
   try {
-    await axios.post(`http://${host}:7980/api/settings/email`, emailForm.value)
+    await api.saveEmailSettings(emailForm.value)
     alert('✅ 发件配置已保存')
   } catch (e) { alert('保存失败') }
 }
@@ -121,7 +121,7 @@ const testEmail = async () => {
   if (!emailForm.value.smtp_server || !alertForm.value.alert_recipient) return alert('请先完善并保存SMTP配置和接收人邮箱！')
   isTesting.value = true
   try {
-    const res = await axios.post(`http://${host}:7980/api/settings/email/test`)
+    const res = await api.testEmail()
     if (res.data.success) alert('测试邮件发送成功，请查收！')
     else alert('发送失败: ' + res.data.message)
   } catch (e) {

@@ -78,9 +78,10 @@
 </template>
 
 <script setup>
+// 全局外壳组件：左侧导航栏 + 路由出口 + 新增服务器弹窗
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import axios from 'axios'
+import { api } from './api'
 
 const route = useRoute()
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
@@ -96,10 +97,10 @@ const allGroups = computed(() => {
   return Array.from(set).filter(g => g && g.trim() !== '')
 })
 
+// 拉取所有节点的分组名（来自数据库）
 const fetchGroups = async () => {
   try {
-    const host = window.location.hostname
-    const res = await axios.get(`http://${host}:7980/api/servers`)
+    const res = await api.getServers()
     dbGroups.value = [...new Set(res.data.map(s => s.group_name))]
   } catch (error) { console.error('获取分组失败', error) }
 }
@@ -122,8 +123,7 @@ const submitAddServer = async () => {
     return alert('主机名和 IP 地址不能为空！')
   }
   try {
-    const host = window.location.hostname
-    await axios.post(`http://${host}:7980/api/servers/add`, addForm.value)
+    await api.addServer(addForm.value)
     alert('服务器添加成功！后台将在一分钟内尝试连接。')
     showAddModal.value = false
     window.dispatchEvent(new CustomEvent('server-updated'))
@@ -132,7 +132,7 @@ const submitAddServer = async () => {
   }
 }
 
-// 👑 全局更新网页标签名称的核心函数
+// 同步浏览器标签页标题
 const updatePageTitle = () => {
   document.title = localStorage.getItem('pageTitle') || 'Node Monitor'
 }

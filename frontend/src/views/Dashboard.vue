@@ -126,10 +126,11 @@
 </template>
 
 <script setup>
+// 首页：服务器节点卡片网格（总览 + 详情/编辑弹窗）
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import axios from 'axios'
 import RingChart from '../components/RingChart.vue'
+import { api } from '../api'
 
 const route = useRoute()
 const servers = ref([])
@@ -144,10 +145,10 @@ const availableGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '
 
 const fetchServers = async () => {
   try {
-    const host = window.location.hostname
-    const res = await axios.get(`http://${host}:7980/api/servers`)
+    const res = await api.getServers()
     servers.value = res.data
-    
+
+    // 同步数据库分组到编辑表单的候选列表
     const dbGroups = res.data.map(s => s.group_name)
     availableGroups.value = Array.from(new Set([...availableGroups.value, ...dbGroups])).filter(Boolean)
   } catch (error) { 
@@ -172,7 +173,7 @@ const getGpuAvg = (gpuData) => {
 
 const formatTime = (isoString) => isoString ? new Date(isoString).toLocaleTimeString() : '--:--:--'
 
-// 👑 修复：完整的打开弹窗并进行全量深拷贝赋值逻辑
+// 打开详情/编辑弹窗（深拷贝一份，避免直接改动列表数据）
 const openEditModal = (server) => {
   editForm.value = { 
     id: server.id, 
@@ -193,11 +194,10 @@ const openEditModal = (server) => {
   showEditModal.value = true
 }
 
-// 👑 修复：完整的发送修改请求到后端的处理函数
+// 提交节点配置修改到后端
 const saveServerInfo = async () => {
   try {
-    const host = window.location.hostname
-    await axios.post(`http://${host}:7980/api/server/${editForm.value.id}/update`, editForm.value)
+    await api.updateServer(editForm.value.id, editForm.value)
     showEditModal.value = false
     await fetchServers()
     window.dispatchEvent(new CustomEvent('server-updated')) 

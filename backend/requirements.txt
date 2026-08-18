@@ -1,10 +1,12 @@
+# Node Monitor 后端依赖
+# 安装：pip install -r requirements.txt
+
 fastapi==0.104.1
 uvicorn==0.24.0
 sqlalchemy==2.0.23
 pymysql==1.1.0
-cryptography==41.0.5  # pymysql 可能会用到
-celery==5.3.6
-redis==5.0.1
-paramiko==3.3.1
+cryptography==41.0.5      # PyMySQL 认证加密所需
+paramiko==3.3.1           # SSH 数据采集
 pydantic==2.5.2
-websockets==12.0
+apscheduler==3.10.4       # 后台定时调度（采集 / 落库 / 告警巡检）
+python-dotenv==1.0.1      # 读取 .env 配置文件
