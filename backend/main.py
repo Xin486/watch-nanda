@@ -8,6 +8,9 @@ Node Monitor 后端 API 入口
 启动方式（在 backend 目录下执行）：
     uvicorn main:app --host 0.0.0.0 --port 7980
 """
+import json
+import time
+import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -316,6 +319,75 @@ def test_email(db: Session = Depends(get_db)):
         return {"success": success, "message": msg}
     except Exception as e:
         return {"success": False, "message": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# 行情数据代理（大屏 K 线）
+# ---------------------------------------------------------------------------
+# 内存缓存：避免前端每 60 秒轮询时频繁请求上游接口 {cache_key: (过期时间戳, 数据)}
+_kline_cache = {}
+
+
+@app.get("/api/market/kline")
+def get_market_kline(symbol: str = "90.BK1036", klt: int = 101, lmt: int = 120):
+    """代理东方财富 K 线接口（后端转发以避开浏览器跨域限制），带 60 秒内存缓存
+
+    参数说明：
+    - symbol: 东方财富 secid。默认 90.BK1036 = 「半导体」行业板块指数；
+              个股示例：1.688981（沪市·中芯国际）、0.002371（深市·北方华创）
+    - klt:    K 线周期。101=日K、102=周K、103=月K；1/5/15/30/60=分钟K
+    - lmt:    返回条数（默认 120 根）
+    """
+    cache_key = f"{symbol}:{klt}:{lmt}"
+    cached = _kline_cache.get(cache_key)
+    if cached and cached[0] > time.time():
+        return cached[1]
+
+    url = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        f"?secid={symbol}&klt={klt}&fqt=1&lmt={lmt}&end=20500101"
+        "&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
+    )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+
+        stock = (raw or {}).get("data") or {}
+
+        # 每条 K 线格式：日期,开,收,高,低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
+        klines = []
+        for line in stock.get("klines", []):
+            p = line.split(",")
+            if len(p) < 6:
+                continue
+            klines.append({
+                "time": p[0],
+                "open": float(p[1]),
+                "close": float(p[2]),
+                "high": float(p[3]),
+                "low": float(p[4]),
+                "volume": float(p[5]),
+            })
+
+        if not klines:
+            return {"name": "", "code": symbol, "klines": [], "latest": None}
+
+        last = klines[-1]
+        prev = klines[-2]["close"] if len(klines) > 1 else last["open"]
+        payload = {
+            "name": stock.get("name") or "行情",
+            "code": stock.get("code") or symbol,
+            "klines": klines,
+            "latest": {
+                "price": last["close"],
+                "pct": round((last["close"] - prev) / prev * 100, 2) if prev else 0,
+            },
+        }
+        _kline_cache[cache_key] = (time.time() + 60, payload)
+        return payload
+    except Exception as e:
+        return {"error": str(e), "name": "", "code": symbol, "klines": [], "latest": None}
 
 
 # ---------------------------------------------------------------------------

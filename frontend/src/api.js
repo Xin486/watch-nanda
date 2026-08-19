@@ -46,6 +46,9 @@ export const api = {
 
   /** 发送测试邮件 */
   testEmail: () => http.post('/api/settings/email/test'),
+
+  /** 获取股票/板块 K 线（后端代理东方财富，参数如 { symbol: '90.BK1036', klt: 101, lmt: 120 }） */
+  getMarketKline: (params) => http.get('/api/market/kline', { params }),
 }
 
 export default http

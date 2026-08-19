@@ -29,6 +29,16 @@
               <span class="weather-desc">{{ weather.city || '当前位置' }} · {{ weather.desc }}</span>
             </div>
           </div>
+          <div class="market" v-if="marketData && marketData.klines.length" @click="openMarketModal" title="半导体 K 线，点击查看大图">
+            <div class="market-info">
+              <span class="market-name">{{ marketData.name }}</span>
+              <span class="market-price" :class="marketData.latest.pct >= 0 ? 'market-up' : 'market-down'">
+                {{ marketData.latest.price }}
+                <em>{{ (marketData.latest.pct >= 0 ? '+' : '') + marketData.latest.pct }}%</em>
+              </span>
+            </div>
+            <div ref="miniKlineRef" class="market-mini"></div>
+          </div>
           <span class="live-dot"></span>
           <div class="datetime">
             <span class="date">{{ currentDate }}</span>
@@ -197,6 +207,25 @@
           <div ref="barChartRef" class="echart-box-horizontal"></div>
         </div>
       </footer>
+
+      <!-- ============ 行情 K 线弹窗 ============ -->
+      <div class="market-modal-overlay" v-if="showMarketModal" @click.self="closeMarketModal">
+        <div class="market-modal tech-panel">
+          <span class="corner tl"></span><span class="corner tr"></span>
+          <span class="corner bl"></span><span class="corner br"></span>
+          <div class="panel-head head-between">
+            <span class="head-left">
+              <i class="ph-ico">📈</i>
+              <h3>{{ marketData.name }} · 日K线</h3>
+              <span class="market-price" :class="marketData.latest.pct >= 0 ? 'market-up' : 'market-down'">
+                {{ marketData.latest.price }} <em>{{ (marketData.latest.pct >= 0 ? '+' : '') + marketData.latest.pct }}%</em>
+              </span>
+            </span>
+            <span class="market-modal-close" @click="closeMarketModal">✖</span>
+          </div>
+          <div ref="bigKlineRef" class="market-big"></div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -219,6 +248,16 @@ const barChart = shallowRef(null)
 
 // 天气
 const weather = ref(null)
+
+// 半导体行情 K 线
+const marketData = ref(null)
+const showMarketModal = ref(false)
+const miniKlineRef = ref(null)
+const bigKlineRef = ref(null)
+const miniKline = shallowRef(null)
+const bigKline = shallowRef(null)
+const MARKET_SYMBOL = '90.BK1036'   // 东方财富「半导体」行业板块指数
+let marketTimer = null
 
 // ---------- 数据拉取 ----------
 const fetchServers = async () => {
@@ -303,6 +342,14 @@ const fetchWeather = async () => {
       city: pos.city
     }
   } catch (e) { console.error('天气获取失败', e) }
+}
+
+// ---------- 行情 K 线（后端代理东方财富） ----------
+const fetchMarket = async () => {
+  try {
+    const res = await api.getMarketKline({ symbol: MARKET_SYMBOL, klt: 101, lmt: 120 })
+    if (res.data && res.data.klines && res.data.klines.length) marketData.value = res.data
+  } catch (error) { console.error('行情数据拉取失败', error) }
 }
 
 // ---------- 派生数据 ----------
@@ -476,6 +523,106 @@ const renderCharts = () => {
   }
 }
 
+// ---------- 行情 K 线渲染 ----------
+// 计算 N 日均线（不足 N 根的位置返回 null）
+const calcMA = (klines, n) => klines.map((k, i) => {
+  if (i < n - 1) return null
+  let sum = 0
+  for (let j = 0; j < n; j++) sum += klines[i - j].close
+  return +(sum / n).toFixed(2)
+})
+
+// 从后端 K 线数据构造 ECharts 所需的数据序列
+const marketTheme = (klines) => ({
+  times: klines.map(k => k.time),
+  candles: klines.map(k => [k.open, k.close, k.low, k.high]),
+  ma5: calcMA(klines, 5),
+  ma10: calcMA(klines, 10),
+  ma20: calcMA(klines, 20),
+})
+
+// 顶栏迷你 K 线（无坐标轴，仅看走势）
+const renderMiniKline = () => {
+  if (!miniKline.value && miniKlineRef.value) miniKline.value = echarts.init(miniKlineRef.value)
+  if (!miniKline.value || !marketData.value) return
+  const { times, candles } = marketTheme(marketData.value.klines)
+  miniKline.value.setOption({
+    animation: false,
+    grid: { left: 0, right: 0, top: 4, bottom: 0 },
+    xAxis: { type: 'category', data: times, show: false },
+    yAxis: { type: 'value', show: false, scale: true },
+    series: [{
+      type: 'candlestick',
+      data: candles,
+      // A股惯例：红涨绿跌
+      itemStyle: { color: '#f87171', color0: '#34d399', borderColor: '#f87171', borderColor0: '#34d399' }
+    }]
+  })
+}
+
+// 弹窗大图：K 线 + MA5/10/20 + 缩放
+const renderBigKline = () => {
+  if (!bigKline.value && bigKlineRef.value) bigKline.value = echarts.init(bigKlineRef.value)
+  if (!bigKline.value || !marketData.value) return
+  const { times, candles, ma5, ma10, ma20 } = marketTheme(marketData.value.klines)
+  bigKline.value.setOption({
+    backgroundColor: 'transparent',
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      backgroundColor: 'rgba(8, 18, 38, 0.92)',
+      borderColor: 'rgba(34, 211, 238, 0.35)',
+      textStyle: { color: '#dbeafe' }
+    },
+    legend: { data: ['K线', 'MA5', 'MA10', 'MA20'], top: 0, textStyle: { color: '#a9c8e8' } },
+    grid: { left: '3%', right: '2%', top: '12%', bottom: '14%' },
+    xAxis: {
+      type: 'category',
+      data: times,
+      axisLine: { lineStyle: { color: 'rgba(148,163,184,.3)' } },
+      axisLabel: { color: '#a9c8e8' }
+    },
+    yAxis: {
+      scale: true,
+      splitLine: { lineStyle: { color: 'rgba(148,163,184,.15)' } },
+      axisLabel: { color: '#a9c8e8' }
+    },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 16, bottom: 2,
+        borderColor: 'rgba(34,211,238,.3)', backgroundColor: 'rgba(8,16,34,.6)',
+        fillerColor: 'rgba(34,211,238,.15)', textStyle: { color: '#a9c8e8' } }
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: candles,
+        itemStyle: { color: '#f87171', color0: '#34d399', borderColor: '#f87171', borderColor0: '#34d399' }
+      },
+      { name: 'MA5', type: 'line', data: ma5, smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#fbbf24' } },
+      { name: 'MA10', type: 'line', data: ma10, smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#22d3ee' } },
+      { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1, color: '#8b5cf6' } }
+    ]
+  })
+}
+
+const openMarketModal = () => {
+  showMarketModal.value = true
+  nextTick(() => renderBigKline())
+}
+
+const closeMarketModal = () => {
+  showMarketModal.value = false
+  if (bigKline.value) { bigKline.value.dispose(); bigKline.value = null }
+}
+
+watch(marketData, () => {
+  nextTick(() => {
+    renderMiniKline()
+    if (showMarketModal.value) renderBigKline()
+  })
+})
+
 watch(servers, () => { nextTick(() => renderCharts()) }, { deep: true })
 
 // ---------- 时钟 ----------
@@ -489,15 +636,17 @@ const tickClock = () => {
 onMounted(() => {
   fetchServers()
   fetchWeather()
+  fetchMarket()
   tickClock()
-  dataTimer = setInterval(fetchServers, 60000)
+  dataTimer = setInterval(fetchServers, 60000)   // 监控数据：60 秒刷新
+  marketTimer = setInterval(fetchMarket, 60000)  // 行情 K 线：60 秒刷新
   timer = setInterval(tickClock, 1000)
-  window.addEventListener('resize', () => { barChart.value?.resize() })
+  window.addEventListener('resize', () => { barChart.value?.resize(); miniKline.value?.resize(); bigKline.value?.resize() })
 })
 
 onUnmounted(() => {
-  clearInterval(timer); clearInterval(dataTimer)
-  barChart.value?.dispose()
+  clearInterval(timer); clearInterval(dataTimer); clearInterval(marketTimer)
+  barChart.value?.dispose(); miniKline.value?.dispose(); bigKline.value?.dispose()
 })
 </script>
 
@@ -572,6 +721,24 @@ onUnmounted(() => {
 .weather-temp { font-size: 18px; font-weight: 800; color: #e0f2fe; font-family: "SFMono-Regular", Consolas, monospace; text-shadow: 0 0 10px rgba(34, 211, 238, .4); }
 .weather-temp em { font-style: normal; font-size: 11px; color: #7dd3fc; margin-left: 1px; }
 .weather-desc { font-size: 10px; color: #7dd3fc; letter-spacing: 1px; }
+
+/* ---- 顶栏：半导体行情 K 线卡片 ---- */
+.market { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border: 1px solid rgba(34, 211, 238, .25); border-radius: 6px; background: rgba(34, 211, 238, .06); cursor: pointer; transition: .25s; }
+.market:hover { background: rgba(34, 211, 238, .14); box-shadow: 0 0 14px rgba(34, 211, 238, .3); }
+.market-info { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.market-name { font-size: 10px; color: #7dd3fc; letter-spacing: 1px; }
+.market-price { font-size: 15px; font-weight: 800; font-family: "SFMono-Regular", Consolas, monospace; }
+.market-price em { font-style: normal; font-size: 10px; margin-left: 4px; }
+.market-up { color: #f87171; }    /* A股惯例：红涨 */
+.market-down { color: #34d399; }  /* 绿跌 */
+.market-mini { width: 110px; height: 34px; }
+
+/* ---- 行情 K 线弹窗 ---- */
+.market-modal-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(3, 5, 12, .75); display: flex; align-items: center; justify-content: center; }
+.market-modal { width: 860px; max-width: 92vw; padding: 16px 18px; }
+.market-modal-close { cursor: pointer; color: #94a3b8; font-size: 16px; }
+.market-modal-close:hover { color: #f87171; }
+.market-big { width: 100%; height: 420px; }
 .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; animation: pulse 1.6s ease-in-out infinite; }
 .datetime { display: flex; flex-direction: column; align-items: flex-end; }
 .date { font-size: 11px; color: #7dd3fc; letter-spacing: 1px; }
