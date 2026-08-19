@@ -1,5 +1,9 @@
 # Node Monitor 后端依赖
 # 安装：pip install -r requirements.txt
+#
+# 已内置清华镜像源（国内服务器安装加速）；
+# 国外环境或公司内网私有源环境可删除下面这一行，改用系统 pip 全局配置。
+-i https://pypi.tuna.tsinghua.edu.cn/simple
 
 fastapi==0.104.1
 uvicorn==0.24.0
