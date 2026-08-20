@@ -13,7 +13,21 @@
 
 ## 部署步骤
 
-### 1. 安装依赖
+### 方式一：一键初始化（推荐）
+
+要求机器已安装 Docker、Python 3.9~3.12、Node.js 18+，然后：
+
+```bash
+bash setup.sh    # 自动：生成 .env → Docker 拉起 MySQL → 建库导表 → 安装前后端依赖
+bash start.sh    # 启动平台
+```
+
+`setup.sh` 是幂等的，可重复执行；若 `.env` 中 `DB_HOST` 指向远程数据库，
+脚本会跳过 Docker 创建，直接用本机 `mysql` 客户端建库导表。
+
+### 方式二：手动部署
+
+#### 1. 安装依赖
 
 ```bash
 cd backend
@@ -23,7 +37,7 @@ cd ../frontend
 npm install
 ```
 
-### 2. 配置数据库连接（唯一需要改的配置）
+#### 2. 配置数据库连接（唯一需要改的配置）
 
 ```bash
 cd backend
@@ -37,13 +51,13 @@ vim .env    # 修改 DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
 - 环境变量优先级高于 `.env` 文件（例如 docker 部署可直接 `export DATABASE_URL=...` 整体覆盖）。
 - 密码支持特殊字符，无需手动转义。
 
-### 3. 初始化数据库
+#### 3. 初始化数据库
 
 ```bash
 mysql -u root -p < monitor_db.sql
 ```
 
-### 4. 配置 SSH 免密（后端 → 被监控服务器）
+### 配置 SSH 免密（后端 → 被监控服务器）
 
 运行后端的机器必须能以节点配置的账号（默认 root）免密 SSH 登录每台被监控服务器，
 否则节点将一直显示离线：
@@ -52,7 +66,7 @@ mysql -u root -p < monitor_db.sql
 ssh-copy-id root@<被监控服务器IP>
 ```
 
-### 5. 启动 / 停止
+### 启动 / 停止
 
 ```bash
 bash start.sh   # 同时拉起后端(7980)与前端(3000)
@@ -65,6 +79,7 @@ bash stop.sh    # 一键安全关闭
 
 ```
 watch-nanda/
+├── setup.sh                  # 一键环境初始化（.env + Docker MySQL + 建表 + 依赖）
 ├── start.sh / stop.sh        # 启停脚本
 ├── monitor_db.sql            # 数据库建表语句
 ├── README.md
