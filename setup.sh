@@ -205,8 +205,28 @@ fi
 # ---------------------------------------------------------------------
 log "安装后端依赖 (pip) ..."
 cd "$BACKEND_DIR"
+
+# 确保 pip 可用（Ubuntu 系统 Python 默认不带 pip，需单独安装 python3-pip 包）
+if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+    warn "当前 Python ($PYTHON_BIN) 未安装 pip"
+    if command -v apt-get >/dev/null 2>&1; then
+        log "尝试通过 apt 自动安装 python3-pip ..."
+        apt-get install -y python3-pip || fail "自动安装失败，请手动执行: apt install -y python3-pip 后重跑"
+    else
+        fail "请先安装 pip（Debian/Ubuntu: apt install -y python3-pip）后重跑本脚本"
+    fi
+fi
+
 "$PYTHON_BIN" -m pip install --upgrade pip -q
-"$PYTHON_BIN" -m pip install -r requirements.txt -q
+
+# Ubuntu 23.04+ 会限制 pip 全局安装（externally-managed），失败时自动加 --break-system-packages 重试
+if "$PYTHON_BIN" -m pip install -r requirements.txt -q; then
+    :
+elif "$PYTHON_BIN" -m pip install --break-system-packages -r requirements.txt -q; then
+    warn "已使用 --break-system-packages 方式安装（系统限制了 pip 全局安装）"
+else
+    fail "后端依赖安装失败，请根据上方 pip 输出排查"
+fi
 ok "后端依赖安装完成"
 
 log "安装前端依赖 (npm) ..."
