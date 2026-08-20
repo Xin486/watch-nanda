@@ -120,7 +120,9 @@ if [ "$LOCAL_DB" = "1" ]; then
                 -v "$VOLUME_NAME:/var/lib/mysql" \
                 --restart unless-stopped \
                 "$MYSQL_IMAGE" \
-                --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci >/dev/null
+                --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci \
+                --innodb-buffer-pool-size=256M \
+                --performance-schema=OFF >/dev/null
             ok "MySQL 容器已创建"
 
             # 若 .env 配置了非 root 账号，首次创建容器后自动建号授权
@@ -131,17 +133,18 @@ if [ "$LOCAL_DB" = "1" ]; then
         fi
     fi
 
-    # 等待容器内 MySQL 就绪（最多 120 秒）
+    # 等待容器内 MySQL 就绪（最多 120 秒；用真实查询探测，ping 通不代表可执行 SQL）
     if [ -z "$MYSQL_EXEC" ]; then
         log "等待 MySQL 就绪..."
         READY=0
         for i in $(seq 1 60); do
-            if MYSQL_PWD="$DB_PASSWORD" docker exec "$CONTAINER_NAME" mysqladmin ping -u"$DB_USER" --silent >/dev/null 2>&1; then
+            if MYSQL_PWD="$DB_PASSWORD" docker exec "$CONTAINER_NAME" mysql -u"$DB_USER" -N -e "SELECT 1" >/dev/null 2>&1; then
                 READY=1; break
             fi
             sleep 2
         done
         [ "$READY" = "1" ] || fail "MySQL 容器启动超时，请检查日志: docker logs $CONTAINER_NAME"
+        sleep 3   # 缓冲：确保初始化完全稳定后再导表
         MYSQL_EXEC="docker exec -i $CONTAINER_NAME mysql -u$DB_USER"
         ok "MySQL 已就绪"
     fi
@@ -159,15 +162,24 @@ log "创建数据库 $DB_NAME（如不存在）..."
 MYSQL_PWD="$DB_PASSWORD" $MYSQL_EXEC -e \
     "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-TABLE_COUNT=$(MYSQL_PWD="$DB_PASSWORD" $MYSQL_EXEC -N -e \
-    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_name='servers';" 2>/dev/null || echo "0")
+# 使用 --force 导入：已存在的表/索引报错会被忽略，缺失的结构自动补齐
+log "导入表结构 monitor_db.sql（幂等，最多重试 3 次）..."
+for attempt in 1 2 3; do
+    if MYSQL_PWD="$DB_PASSWORD" $MYSQL_EXEC --force "$DB_NAME" < "$SQL_FILE"; then
+        break
+    fi
+    warn "导入中断（第 $attempt 次）。常见原因：宿主机内存不足，MySQL 被 OOM 杀死（可用 free -h 查看）"
+    warn "10 秒后重试..."
+    sleep 10
+done
 
-if [ "$TABLE_COUNT" = "0" ]; then
-    log "导入表结构 monitor_db.sql ..."
-    MYSQL_PWD="$DB_PASSWORD" $MYSQL_EXEC "$DB_NAME" < "$SQL_FILE"
-    ok "数据表创建完成（servers / server_stats / alert_configs / email_configs）"
+# 最终校验：四张核心表必须全部存在
+FINAL_TABLE_COUNT=$(MYSQL_PWD="$DB_PASSWORD" $MYSQL_EXEC -N -e \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_type='BASE TABLE';" 2>/dev/null || echo "0")
+if [ "$FINAL_TABLE_COUNT" -ge 4 ]; then
+    ok "数据表已就绪（$FINAL_TABLE_COUNT 张：servers / server_stats / alert_configs / email_configs）"
 else
-    ok "数据表已存在，跳过导入"
+    fail "表结构不完整（$FINAL_TABLE_COUNT/4）。请检查容器日志: docker logs $CONTAINER_NAME，以及内存: free -h"
 fi
 
 # ---------------------------------------------------------------------
