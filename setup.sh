@@ -70,8 +70,8 @@ else
     ok "已存在 backend/.env"
 fi
 
-# 逐行解析 .env（不用 source，避免密码含特殊字符时被 shell 求值）
-read_env() { grep -E "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2-; }
+# 逐行解析 .env（不用 source，避免密码含特殊字符时被 shell 求值；tr -d 防止 CRLF 污染）
+read_env() { grep -E "^$1=" "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '\r'; }
 DB_HOST=$(read_env DB_HOST); DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=$(read_env DB_PORT); DB_PORT=${DB_PORT:-3306}
 DB_USER=$(read_env DB_USER); DB_USER=${DB_USER:-root}
