@@ -147,6 +147,12 @@ if [ "$LOCAL_DB" = "1" ]; then
                 READY=1; break
             fi
             [ $((i % 10)) -eq 0 ] && warn "仍在等待 MySQL 就绪（${i}/60）..."
+            # 容器正常运行但持续认证失败 → 多半是容器密码与 .env 不一致（容器密码创建后不会随 .env 更新）
+            if [ "$i" -ge 5 ] && [ "$STATE" = "running" ]; then
+                warn "容器在运行但认证失败：容器内 root 密码与 .env 的 DB_PASSWORD 不一致"
+                warn "处理办法：docker rm -f $CONTAINER_NAME && docker volume rm $VOLUME_NAME"
+                warn "         然后重跑本脚本（会用当前 .env 密码重建容器）"
+            fi
             sleep 2
         done
         if [ "$READY" != "1" ]; then
