@@ -91,8 +91,10 @@ esac
 # ---------------------------------------------------------------------
 # 3. 准备数据库（Docker 自动创建 / 远程直连）
 # ---------------------------------------------------------------------
-# MYSQL_EXEC：后续统一通过它执行 SQL（密码经 MYSQL_PWD 环境变量传递，不暴露在命令行）
-MYSQL_EXEC=""
+# mysql_exec：统一执行 SQL 的入口（默认走 Docker 容器；直连/远程分支会重定义）
+# 密码经 MYSQL_PWD 环境变量传递，不暴露在命令行/进程列表
+mysql_exec() { docker exec -i -e "MYSQL_PWD=$DB_PASSWORD" "$CONTAINER_NAME" mysql -u"$DB_USER" "$@"; }
+USE_DOCKER=1
 if [ "$LOCAL_DB" = "1" ]; then
     RUNNING=$(docker ps --format '{{.Names}}' | grep -x "$CONTAINER_NAME" || true)
     EXISTS=$(docker ps -a --format '{{.Names}}' | grep -x "$CONTAINER_NAME" || true)
@@ -110,7 +112,8 @@ if [ "$LOCAL_DB" = "1" ]; then
             warn "端口 $DB_PORT 已被占用（本机可能已装有 MySQL）"
             warn "脚本将跳过 Docker 创建，尝试直连本机 MySQL..."
             command -v mysql >/dev/null 2>&1 || fail "未找到 mysql 客户端；请修改 .env 指向可用数据库后重试"
-            MYSQL_EXEC="MYSQL_PWD=\"$DB_PASSWORD\" mysql -h$DB_HOST -P$DB_PORT -u$DB_USER"
+            mysql_exec() { MYSQL_PWD="$DB_PASSWORD" mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" "$@"; }
+            USE_DOCKER=0
         else
             log "创建 MySQL 容器（首次会拉取镜像 $MYSQL_IMAGE，请耐心等待）..."
             docker run -d --name "$CONTAINER_NAME" \
@@ -134,7 +137,7 @@ if [ "$LOCAL_DB" = "1" ]; then
     fi
 
     # 等待容器内 MySQL 就绪（最多 120 秒；用真实查询探测，ping 通不代表可执行 SQL）
-    if [ -z "$MYSQL_EXEC" ]; then
+    if [ "$USE_DOCKER" = "1" ]; then
         log "等待 MySQL 就绪..."
         READY=0
         for i in $(seq 1 60); do
@@ -161,14 +164,12 @@ if [ "$LOCAL_DB" = "1" ]; then
             fail "MySQL 就绪超时。常见原因：宿主机内存不足 OOM（free -h 查看）、容器反复重启（docker logs 查看）"
         fi
         sleep 3   # 缓冲：确保初始化完全稳定后再导表
-        # docker exec 需用 -e 显式传入密码（宿主环境变量不会自动带进容器）
-        MYSQL_EXEC="docker exec -i -e MYSQL_PWD=\"$DB_PASSWORD\" $CONTAINER_NAME mysql -u$DB_USER"
         ok "MySQL 已就绪"
     fi
 else
     # 远程数据库：用本机 mysql 客户端直连
     command -v mysql >/dev/null 2>&1 || fail "数据库为远程 ($DB_HOST)，但本机未安装 mysql 客户端；请安装后重试，或手动在远程库执行 monitor_db.sql"
-    MYSQL_EXEC="MYSQL_PWD=\"$DB_PASSWORD\" mysql -h$DB_HOST -P$DB_PORT -u$DB_USER"
+    mysql_exec() { MYSQL_PWD="$DB_PASSWORD" mysql -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" "$@"; }
     log "远程数据库模式，跳过 Docker"
 fi
 
@@ -176,13 +177,13 @@ fi
 # 4. 建库 + 导入表结构（幂等，可重复执行）
 # ---------------------------------------------------------------------
 log "创建数据库 $DB_NAME（如不存在）..."
-$MYSQL_EXEC -e \
+mysql_exec -e \
     "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # 使用 --force 导入：已存在的表/索引报错会被忽略，缺失的结构自动补齐
 log "导入表结构 monitor_db.sql（幂等，最多重试 3 次）..."
 for attempt in 1 2 3; do
-    if $MYSQL_EXEC --force "$DB_NAME" < "$SQL_FILE"; then
+    if mysql_exec --force "$DB_NAME" < "$SQL_FILE"; then
         break
     fi
     warn "导入中断（第 $attempt 次）。常见原因：宿主机内存不足，MySQL 被 OOM 杀死（可用 free -h 查看）"
@@ -191,7 +192,7 @@ for attempt in 1 2 3; do
 done
 
 # 最终校验：四张核心表必须全部存在
-FINAL_TABLE_COUNT=$($MYSQL_EXEC -N -e \
+FINAL_TABLE_COUNT=$(mysql_exec -N -e \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME' AND table_type='BASE TABLE';" 2>/dev/null || echo "0")
 if [ "$FINAL_TABLE_COUNT" -ge 4 ]; then
     ok "数据表已就绪（$FINAL_TABLE_COUNT 张：servers / server_stats / alert_configs / email_configs）"
