@@ -31,8 +31,8 @@
             <RingChart :percent="server.cpu_percent" label="CPU" :subText="`${server.cpu_cores}核`" />
             <RingChart :percent="server.ram_percent" label="内存" :subText="`${Math.round(server.ram_used_mb/1024)}/${Math.round(server.ram_total_mb/1024)}G`" />
             <RingChart :percent="getGpuAvg(server.gpu_data)" label="GPU显存" :subText="`${server.gpu_data ? server.gpu_data.length : 0}张`" />
-            <!-- GPU 功率圈：圆环按功耗/上限百分比，中间显示总功率 -->
-            <RingChart :percent="getGpuPowerPercent(server.gpu_data)" label="GPU功率" :subText="`上限${Math.round(getGpuPowerLimit(server.gpu_data))}W`" :centerText="Math.round(getGpuPower(server.gpu_data))" centerUnit="W" />
+            <!-- GPU 功率圈：中间显示总功率；无上限数据时进度按 400W 参考值估算 -->
+            <RingChart :percent="getGpuPowerPercent(server.gpu_data)" label="GPU功率" :centerText="Math.round(getGpuPower(server.gpu_data))" centerUnit="W" />
           </div>
           <div class="detail-info">
             <div class="info-row top-process" v-if="server.top_process">
@@ -178,7 +178,9 @@ const getGpuPower = (gpuData) => (gpuData || []).reduce((sum, g) => sum + (g.pow
 const getGpuPowerLimit = (gpuData) => (gpuData || []).reduce((sum, g) => sum + (g.power_limit || 0), 0)
 const getGpuPowerPercent = (gpuData) => {
   const limit = getGpuPowerLimit(gpuData)
-  return limit > 0 ? Math.round((getGpuPower(gpuData) / limit) * 100) : 0
+  if (limit > 0) return Math.round((getGpuPower(gpuData) / limit) * 100)
+  // 部分新驱动/卡型拿不到功耗上限（如 4090），按 400W 参考值估算进度，仅作视觉参考
+  return Math.min(Math.round((getGpuPower(gpuData) / 400) * 100), 100)
 }
 
 const formatTime = (isoString) => isoString ? new Date(isoString).toLocaleTimeString() : '--:--:--'

@@ -374,7 +374,9 @@ const gpuPowerOf = (s) => (s.gpu_data || []).reduce((sum, g) => sum + (g.power_d
 const gpuPowerLimitOf = (s) => (s.gpu_data || []).reduce((sum, g) => sum + (g.power_limit || 0), 0)
 const gpuPowerPercentOf = (s) => {
   const limit = gpuPowerLimitOf(s)
-  return limit > 0 ? Math.round((gpuPowerOf(s) / limit) * 100) : 0
+  if (limit > 0) return Math.round((gpuPowerOf(s) / limit) * 100)
+  // 部分新驱动/卡型拿不到功耗上限（如 4090），按 400W 参考值估算进度，仅作视觉参考
+  return Math.min(Math.round((gpuPowerOf(s) / 400) * 100), 100)
 }
 
 const rankedServers = computed(() => {
