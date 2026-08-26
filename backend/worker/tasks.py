@@ -117,9 +117,10 @@ def parse_gpu(xml_output):
                 mem_percent = 0
 
             # 功耗读数（可能为 N/A，解析失败按 0 处理）
+            # 注意：nvidia-smi -q -x 中该段元素名为 gpu_power_readings
             power_draw = 0.0
             power_limit = 0.0
-            power_node = gpu.find("power_readings")
+            power_node = gpu.find("gpu_power_readings") or gpu.find("power_readings")
             if power_node is not None:
                 power_draw = _parse_watts(power_node.findtext("power_draw", "") or "N/A")
                 power_limit = _parse_watts(power_node.findtext("power_limit", "") or "N/A")
