@@ -130,14 +130,14 @@
                   <span class="gh-count">{{ groupServers.length }} 台</span>
                 </div>
                 <div class="node-grid">
-                  <div class="node-tile" v-for="s in groupServers" :key="s.id" :class="getLoadLevel(s.cpu_percent)" :title="`${s.hostname} · CPU ${s.cpu_percent}%`">
+                  <div class="node-tile" v-for="s in groupServers" :key="s.id" :class="getLoadLevel(gpuPowerPercentOf(s))" :title="`${s.hostname} · GPU功率 ${Math.round(gpuPowerOf(s))}W`">
                     <div class="nt-top">
                       <span class="nt-name">{{ s.hostname }}</span>
                       <span class="nt-gpu" v-if="s.gpu_data && s.gpu_data.length">{{ s.gpu_data.length }}G</span>
                     </div>
                     <div class="nt-meta">
-                      <span class="nt-cpu">{{ s.cpu_percent }}%</span>
-                      <div class="nt-bar"><i :style="{ width: Math.min(s.cpu_percent, 100) + '%' }"></i></div>
+                      <span class="nt-val">{{ Math.round(gpuPowerOf(s)) }}W</span>
+                      <div class="nt-bar"><i :style="{ width: Math.min(gpuPowerPercentOf(s), 100) + '%' }"></i></div>
                     </div>
                   </div>
                 </div>
@@ -437,9 +437,9 @@ const pct = (n) => {
   return Math.round((n / servers.value.length) * 100) + '%'
 }
 
-const getLoadLevel = (cpu) => {
-  if (cpu >= 80) return 'level-danger'
-  if (cpu >= 40) return 'level-warning'
+const getLoadLevel = (pct) => {
+  if (pct >= 80) return 'level-danger'
+  if (pct >= 40) return 'level-warning'
   return 'level-normal'
 }
 
@@ -857,21 +857,21 @@ onUnmounted(() => {
 .nt-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: #dbeafe; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nt-gpu { flex-shrink: 0; font-size: 10px; background: rgba(34, 211, 238, .15); padding: 1px 5px; border-radius: 3px; font-weight: 700; color: #7dd3fc; border: 1px solid rgba(34, 211, 238, .3); }
 .nt-meta { display: flex; align-items: center; gap: 6px; }
-.nt-cpu { min-width: 34px; font-size: 11px; font-weight: 700; font-family: "SFMono-Regular", Consolas, monospace; }
+.nt-val { min-width: 46px; font-size: 11px; font-weight: 700; font-family: "SFMono-Regular", Consolas, monospace; }
 .nt-bar { flex: 1; height: 3px; background: rgba(148, 163, 184, .15); border-radius: 2px; overflow: hidden; }
 .nt-bar i { display: block; height: 100%; border-radius: 2px; }
 
 .level-normal { background: rgba(16, 185, 129, .1); border-color: rgba(16, 185, 129, .32); }
 .level-normal::before { background: #34d399; box-shadow: 0 0 8px #34d399; }
-.level-normal .nt-cpu { color: #6ee7b7; }
+.level-normal .nt-val { color: #6ee7b7; }
 .level-normal .nt-bar i { background: #34d399; }
 .level-warning { background: rgba(245, 158, 11, .1); border-color: rgba(245, 158, 11, .32); }
 .level-warning::before { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
-.level-warning .nt-cpu { color: #fcd34d; }
+.level-warning .nt-val { color: #fcd34d; }
 .level-warning .nt-bar i { background: #fbbf24; }
 .level-danger { background: rgba(239, 68, 68, .13); border-color: rgba(239, 68, 68, .4); }
 .level-danger::before { background: #f87171; box-shadow: 0 0 8px #f87171; }
-.level-danger .nt-cpu { color: #fca5a5; }
+.level-danger .nt-val { color: #fca5a5; }
 .level-danger .nt-bar i { background: #f87171; }
 
 /* ==================== 右列：区域占用排行 ==================== */
