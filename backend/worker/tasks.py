@@ -89,8 +89,16 @@ def parse_ram(free_output):
     return {"total_mb": 0, "used_mb": 0, "percent": 0}
 
 
+def _parse_watts(text):
+    """解析 nvidia-smi 的功耗文本（形如 "35.12 W"，失败返回 0）"""
+    try:
+        return float(str(text).replace("W", "").strip())
+    except Exception:
+        return 0.0
+
+
 def parse_gpu(xml_output):
-    """解析 nvidia-smi -q -x 的 XML 输出，提取每张卡的型号、温度、显存"""
+    """解析 nvidia-smi -q -x 的 XML 输出，提取每张卡的型号、温度、显存、功耗"""
     gpus = []
     try:
         root = ET.fromstring(xml_output)
@@ -108,12 +116,22 @@ def parse_gpu(xml_output):
             except Exception:
                 mem_percent = 0
 
+            # 功耗读数（可能为 N/A，解析失败按 0 处理）
+            power_draw = 0.0
+            power_limit = 0.0
+            power_node = gpu.find("power_readings")
+            if power_node is not None:
+                power_draw = _parse_watts(power_node.findtext("power_draw", "") or "N/A")
+                power_limit = _parse_watts(power_node.findtext("power_limit", "") or "N/A")
+
             gpus.append({
                 "model": product_name,
                 "temp": temp,
                 "memory_used": mem_used,
                 "memory_total": mem_total,
                 "memory_percent": mem_percent,
+                "power_draw": round(power_draw, 1),    # 当前功耗 (W)
+                "power_limit": round(power_limit, 1),  # 功耗上限 (W)
             })
     except Exception:
         pass

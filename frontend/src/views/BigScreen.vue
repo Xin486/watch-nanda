@@ -152,8 +152,8 @@
             <span class="corner tl"></span><span class="corner tr"></span>
             <span class="corner bl"></span><span class="corner br"></span>
             <div class="panel-head head-between">
-              <span class="head-left"><i class="ph-ico">🏆</i><h3>区域占用排行</h3></span>
-              <span class="head-sub">CPU 占用 · {{ rankedServers.length }} 台在线</span>
+              <span class="head-left"><i class="ph-ico">⚡</i><h3>区域功耗排行</h3></span>
+              <span class="head-sub">GPU 功率 · {{ rankedServers.length }} 台在线</span>
             </div>
             <ul class="rank-list" v-if="rankedServers.length">
               <li v-for="(s, i) in rankedServers" :key="s.id">
@@ -163,9 +163,9 @@
                     <span class="rank-name" :title="s.hostname">{{ s.hostname }}</span>
                     <span class="rank-group">{{ s.group_name || '未分组' }}</span>
                   </div>
-                  <div class="rank-bar"><i :class="rankBarClass(s.cpu_percent)" :style="{ width: Math.min(s.cpu_percent, 100) + '%' }"></i></div>
+                  <div class="rank-bar"><i :class="rankBarClass(gpuPowerPercentOf(s))" :style="{ width: Math.min(gpuPowerPercentOf(s), 100) + '%' }"></i></div>
                 </div>
-                <span class="rank-val" :class="rankValClass(s.cpu_percent)">{{ Math.round(s.cpu_percent || 0) }}%</span>
+                <span class="rank-val" :class="rankValClass(gpuPowerPercentOf(s))">{{ Math.round(gpuPowerOf(s)) }}W</span>
               </li>
             </ul>
             <div class="empty-state" v-else>暂无在线节点数据</div>
@@ -369,21 +369,28 @@ const matrixData = computed(() => {
 })
 const matrixGroupCount = computed(() => Object.keys(matrixData.value).length)
 
-// 区域占用排行：在线节点按 CPU 占用率降序
+// 区域功耗排行：在线节点按 GPU 总功率降序（无 GPU 的节点功率为 0 排最后）
+const gpuPowerOf = (s) => (s.gpu_data || []).reduce((sum, g) => sum + (g.power_draw || 0), 0)
+const gpuPowerLimitOf = (s) => (s.gpu_data || []).reduce((sum, g) => sum + (g.power_limit || 0), 0)
+const gpuPowerPercentOf = (s) => {
+  const limit = gpuPowerLimitOf(s)
+  return limit > 0 ? Math.round((gpuPowerOf(s) / limit) * 100) : 0
+}
+
 const rankedServers = computed(() => {
   return onlineServers.value
     .slice()
-    .sort((a, b) => (b.cpu_percent || 0) - (a.cpu_percent || 0))
+    .sort((a, b) => gpuPowerOf(b) - gpuPowerOf(a))
 })
 
-const rankBarClass = (cpu) => {
-  if (cpu >= 80) return 'bar-danger'
-  if (cpu >= 40) return 'bar-warning'
+const rankBarClass = (pct) => {
+  if (pct >= 80) return 'bar-danger'
+  if (pct >= 40) return 'bar-warning'
   return 'bar-normal'
 }
-const rankValClass = (cpu) => {
-  if (cpu >= 80) return 'val-danger'
-  if (cpu >= 40) return 'val-warning'
+const rankValClass = (pct) => {
+  if (pct >= 80) return 'val-danger'
+  if (pct >= 40) return 'val-warning'
   return 'val-normal'
 }
 

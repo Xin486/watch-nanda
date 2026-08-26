@@ -30,7 +30,9 @@
           <div class="rings-container">
             <RingChart :percent="server.cpu_percent" label="CPU" :subText="`${server.cpu_cores}核`" />
             <RingChart :percent="server.ram_percent" label="内存" :subText="`${Math.round(server.ram_used_mb/1024)}/${Math.round(server.ram_total_mb/1024)}G`" />
-            <RingChart :percent="getGpuAvg(server.gpu_data)" label="GPU" :subText="`${server.gpu_data ? server.gpu_data.length : 0}张`" />
+            <RingChart :percent="getGpuAvg(server.gpu_data)" label="GPU显存" :subText="`${server.gpu_data ? server.gpu_data.length : 0}张`" />
+            <!-- GPU 功率圈：圆环按功耗/上限百分比，中间显示总功率 -->
+            <RingChart :percent="getGpuPowerPercent(server.gpu_data)" label="GPU功率" :subText="`上限${Math.round(getGpuPowerLimit(server.gpu_data))}W`" :centerText="Math.round(getGpuPower(server.gpu_data))" centerUnit="W" />
           </div>
           <div class="detail-info">
             <div class="info-row top-process" v-if="server.top_process">
@@ -169,6 +171,14 @@ const getGpuAvg = (gpuData) => {
   if (!gpuData || gpuData.length === 0) return 0
   const total = gpuData.reduce((acc, curr) => acc + (curr.memory_percent || 0), 0)
   return Math.round(total / gpuData.length)
+}
+
+// ---- GPU 功耗计算（power_draw / power_limit 由后端 nvidia-smi 采集）----
+const getGpuPower = (gpuData) => (gpuData || []).reduce((sum, g) => sum + (g.power_draw || 0), 0)
+const getGpuPowerLimit = (gpuData) => (gpuData || []).reduce((sum, g) => sum + (g.power_limit || 0), 0)
+const getGpuPowerPercent = (gpuData) => {
+  const limit = getGpuPowerLimit(gpuData)
+  return limit > 0 ? Math.round((getGpuPower(gpuData) / limit) * 100) : 0
 }
 
 const formatTime = (isoString) => isoString ? new Date(isoString).toLocaleTimeString() : '--:--:--'
