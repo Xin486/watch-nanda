@@ -116,14 +116,24 @@ def parse_gpu(xml_output):
             except Exception:
                 mem_percent = 0
 
-            # 功耗读数（可能为 N/A，解析失败按 0 处理）
-            # 注意：nvidia-smi -q -x 中该段元素名为 gpu_power_readings
+            # 功耗读数（兼容新旧两种 nvidia-smi XML 格式，解析失败按 0 处理）
+            # 新格式: instant_power_draw / gpu_ceiling_power_limit->current_power_limit
+            # 旧格式: power_draw / power_limit
             power_draw = 0.0
             power_limit = 0.0
             power_node = gpu.find("gpu_power_readings") or gpu.find("power_readings")
             if power_node is not None:
-                power_draw = _parse_watts(power_node.findtext("power_draw", "") or "N/A")
-                power_limit = _parse_watts(power_node.findtext("power_limit", "") or "N/A")
+                power_draw = _parse_watts(power_node.findtext("instant_power_draw", "") or "N/A")
+                if power_draw <= 0:
+                    power_draw = _parse_watts(power_node.findtext("average_power_draw", "") or "N/A")
+                if power_draw <= 0:
+                    power_draw = _parse_watts(power_node.findtext("power_draw", "") or "N/A")
+
+                ceiling = power_node.find("gpu_ceiling_power_limit")
+                if ceiling is not None:
+                    power_limit = _parse_watts(ceiling.findtext("current_power_limit", "") or "N/A")
+                if power_limit <= 0:
+                    power_limit = _parse_watts(power_node.findtext("power_limit", "") or "N/A")
 
             gpus.append({
                 "model": product_name,
