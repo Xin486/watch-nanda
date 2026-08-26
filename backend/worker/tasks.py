@@ -97,6 +97,49 @@ def _parse_watts(text):
         return 0.0
 
 
+# 常见 NVIDIA 显卡参考功耗上限（TDP，单位 W）：驱动拿不到真实 power_limit 时按型号匹配
+# 注意：匹配按子串查找，长型号 key 需排在可能误匹配的短 key 之前
+GPU_TDP_REFERENCE = {
+    "H200": 700, "H100": 700, "H20": 400, "A100": 400, "A800": 300, "A40": 300,
+    "A30": 165, "A16": 250, "A10": 150, "L40S": 350, "L40": 300, "L20": 275, "L4": 72,
+    "V100": 300, "P100": 250, "P40": 250, "T4": 70, "K80": 300,
+    "RTX 6000 Ada": 300, "RTX A6000": 300, "RTX A5500": 230, "RTX A5000": 230,
+    "RTX A4000": 140, "RTX 5000": 265, "RTX 4000": 160, "RTX 4090": 450,
+    "RTX 4080": 320, "RTX 4070 Ti": 285, "RTX 4070": 200, "RTX 4060 Ti": 160, "RTX 4060": 115,
+    "RTX 3090 Ti": 450, "RTX 3090": 350, "RTX 3080 Ti": 350, "RTX 3080": 320,
+    "RTX 3070 Ti": 290, "RTX 3070": 220, "RTX 3060 Ti": 200, "RTX 3060": 170, "RTX 3050": 130,
+    "RTX 2080 Ti": 250, "RTX 2080": 215, "RTX 2070": 175, "RTX 2060": 160,
+    "GTX 1080 Ti": 250, "GTX 1080": 180, "GTX 1070 Ti": 180, "GTX 1070": 150, "GTX 1060": 120,
+}
+# 型号未收录时的默认参考功耗
+DEFAULT_GPU_TDP = 350
+
+
+def reference_power_limit(model, current):
+    """返回功耗上限：优先真实读数，其次按型号匹配参考 TDP，最后用默认值"""
+    if current and current > 0:
+        return current
+    if model:
+        model_lower = model.lower()
+        for key, tdp in GPU_TDP_REFERENCE.items():
+            if key.lower() in model_lower:
+                return tdp
+    return DEFAULT_GPU_TDP
+
+
+def parse_gpu_power_csv(csv_output):
+    """解析 nvidia-smi --query-gpu=power.draw,power.max_limit 的 CSV 输出
+
+    返回 [(draw, limit), ...]，顺序与 XML 中的 GPU 顺序一致；N/A 解析为 0。
+    """
+    rows = []
+    for line in csv_output.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2:
+            rows.append((_parse_watts(parts[0]), _parse_watts(parts[1])))
+    return rows
+
+
 def parse_gpu(xml_output):
     """解析 nvidia-smi -q -x 的 XML 输出，提取每张卡的型号、温度、显存、功耗"""
     gpus = []
@@ -134,6 +177,9 @@ def parse_gpu(xml_output):
                     power_limit = _parse_watts(ceiling.findtext("current_power_limit", "") or "N/A")
                 if power_limit <= 0:
                     power_limit = _parse_watts(power_node.findtext("power_limit", "") or "N/A")
+
+            # XML 拿不到上限时，按显卡型号匹配内置参考 TDP（不同卡型上限差异大）
+            power_limit = reference_power_limit(product_name, power_limit)
 
             gpus.append({
                 "model": product_name,
@@ -274,6 +320,7 @@ def _do_monitor_server(server_id):
                 "echo '<<<CPU>>>'; top -bn1 | head -n 5; "
                 "echo '<<<CORES>>>'; nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo; "
                 "echo '<<<GPU>>>'; timeout 15 nvidia-smi -q -x 2>/dev/null || echo 'NO_GPU'; "
+                "echo '<<<GPUPW>>>'; nvidia-smi --query-gpu=power.draw,power.max_limit --format=csv,noheader 2>/dev/null || echo 'NO_GPU'; "
                 "echo '<<<TOP_PROC>>>'; ps -eo user,%cpu,%mem,comm --sort=-%cpu | head -n 2 | tail -n 1; "
                 "echo '<<<END>>>'"
             )
@@ -311,6 +358,18 @@ def _do_monitor_server(server_id):
                 start = gpu_part.find("<")
                 if start != -1:
                     data["gpu_data"] = parse_gpu(gpu_part[start:])
+
+            # GPU 功率：优先用 CSV 查询结果修正（query 接口格式稳定，不受驱动 XML 结构变化影响）
+            gpu_pw_part = get_section(output, "GPUPW")
+            if "NO_GPU" not in gpu_pw_part and gpu_pw_part.strip():
+                pw_rows = parse_gpu_power_csv(gpu_pw_part)
+                for i, gpu in enumerate(data["gpu_data"]):
+                    if i < len(pw_rows):
+                        draw, limit = pw_rows[i]
+                        if draw and draw > 0:
+                            gpu["power_draw"] = draw
+                        if limit and limit > 0:
+                            gpu["power_limit"] = limit
 
             # 当前 CPU 占用最高的进程
             top_proc_part = get_section(output, "TOP_PROC")
