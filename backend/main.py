@@ -15,15 +15,18 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
+import asyncio
+
 import uvicorn
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from models.database import get_db
+from models.database import SessionLocal, get_db
 from models.models import AlertConfig, EmailConfig, Server, ServerStats
-from worker.tasks import send_email_wrapper, start_scheduler
+from worker.tasks import send_email_wrapper, start_scheduler, monitor_once, collect_server_data
 
 # ---------------------------------------------------------------------------
 # 应用初始化
@@ -42,8 +45,9 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    """FastAPI 启动时拉起后台采集调度器（每分钟采集 / 每 10 分钟落库 / 每分钟告警巡视）"""
-    start_scheduler()
+    """FastAPI 启动时立即执行一次全量采集，再拉起后台调度器"""
+    monitor_once()       # 阻塞采集，确保首次打开页面就有数据
+    start_scheduler()    # 拉起后台定时任务
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +184,58 @@ def delete_server_node(server_id: int, db: Session = Depends(get_db)):
     db.delete(server)
     db.commit()
     return {"success": True, "message": "服务器已彻底删除"}
+
+
+# ---------------------------------------------------------------------------
+# SSE 实时数据推送（替代前端 60 秒轮询）
+# ---------------------------------------------------------------------------
+@app.get("/api/stream/servers")
+async def stream_servers():
+    """Server-Sent Events 端点：每 10 秒推送一次最新数据（只读 DB 缓存，不触发 SSH 采集）"""
+
+    def _build_payload(db):
+        """读取所有活跃节点，拼装与 /api/servers 相同结构的 JSON"""
+        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
+        result = []
+        for server in servers:
+            data = server.latest_status_data or {}
+            if not data:
+                data = {
+                    "status": server.status or "unknown",
+                    "uptime_seconds": 0, "cpu_percent": 0, "cpu_cores": 0,
+                    "ram_percent": 0, "ram_used_mb": 0, "ram_total_mb": 0,
+                    "gpu_data": [], "top_process": "暂无",
+                    "timestamp": server.last_online.isoformat() + "Z" if server.last_online else None,
+                }
+            elif "top_process" not in data:
+                data["top_process"] = "暂无"
+            result.append({
+                "id": server.id,
+                "hostname": server.hostname,
+                "ip_address": server.ip_address,
+                "group_name": server.group_name,
+                "status": server.status,
+                "ssh_user": server.ssh_user,
+                "ssh_port": server.ssh_port,
+                **data,
+            })
+        return result
+
+    async def event_generator():
+        while True:
+            db = SessionLocal()
+            try:
+                payload = _build_payload(db)
+            finally:
+                db.close()
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(10)  # 每 10 秒推送一次（只读 DB，不触发 SSH）
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------

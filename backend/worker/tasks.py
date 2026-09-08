@@ -290,6 +290,95 @@ def check_server_alerts():
 # ---------------------------------------------------------------------------
 # 核心采集逻辑
 # ---------------------------------------------------------------------------
+def collect_server_data(server):
+    """通过 SSH 采集单台服务器的全部指标，返回 data 字典。
+
+    纯采集逻辑，不涉及数据库写入，供 _do_monitor_server 和 SSE 端点共用。
+    """
+    data = {
+        "uptime_seconds": 0, "cpu_percent": 0, "cpu_cores": 1,
+        "ram_total_mb": 0, "ram_used_mb": 0, "ram_percent": 0,
+        "gpu_data": [], "top_process": "暂无",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+    client = None
+    try:
+        cmd = (
+            "export PATH=$PATH:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin; "
+            "echo '<<<UPTIME>>>'; cat /proc/uptime; "
+            "echo '<<<RAM>>>'; free -m; "
+            "echo '<<<CPU>>>'; top -bn1 | head -n 5; "
+            "echo '<<<CORES>>>'; nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo; "
+            "echo '<<<GPU>>>'; timeout 15 nvidia-smi -q -x 2>/dev/null || echo 'NO_GPU'; "
+            "echo '<<<GPUPW>>>'; nvidia-smi --query-gpu=power.draw,power.max_limit --format=csv,noheader 2>/dev/null || echo 'NO_GPU'; "
+            "echo '<<<TOP_PROC>>>'; ps -eo user,%cpu,%mem,comm --sort=-%cpu | head -n 2 | tail -n 1; "
+            "echo '<<<END>>>'"
+        )
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        target_host = server.ip_address if server.ip_address else server.hostname
+
+        client.connect(
+            hostname=target_host,
+            port=server.ssh_port,
+            username=server.ssh_user or "root",
+            timeout=15,
+        )
+
+        _, stdout, _ = client.exec_command(cmd, timeout=15)
+        output = stdout.read().decode("utf-8", errors="ignore")
+
+        # 逐段解析
+        data["uptime_seconds"] = parse_uptime(get_section(output, "UPTIME"))
+        ram_info = parse_ram(get_section(output, "RAM"))
+        data["ram_total_mb"] = ram_info["total_mb"]
+        data["ram_used_mb"] = ram_info["used_mb"]
+        data["ram_percent"] = ram_info["percent"]
+        data["cpu_percent"] = parse_cpu(get_section(output, "CPU"))
+
+        try:
+            data["cpu_cores"] = int(re.search(r"(\d+)", get_section(output, "CORES")).group(1))
+        except Exception:
+            pass
+
+        # GPU 段：无卡时命令输出 NO_GPU，跳过解析
+        gpu_part = get_section(output, "GPU")
+        if "NO_GPU" not in gpu_part and gpu_part.strip():
+            start = gpu_part.find("<")
+            if start != -1:
+                data["gpu_data"] = parse_gpu(gpu_part[start:])
+
+        # GPU 功率：优先用 CSV 查询结果修正
+        gpu_pw_part = get_section(output, "GPUPW")
+        if "NO_GPU" not in gpu_pw_part and gpu_pw_part.strip():
+            pw_rows = parse_gpu_power_csv(gpu_pw_part)
+            for i, gpu in enumerate(data["gpu_data"]):
+                if i < len(pw_rows):
+                    draw, limit = pw_rows[i]
+                    if draw and draw > 0:
+                        gpu["power_draw"] = draw
+                    if limit and limit > 0:
+                        gpu["power_limit"] = limit
+
+        # 当前 CPU 占用最高的进程
+        top_proc_part = get_section(output, "TOP_PROC")
+        if top_proc_part:
+            parts = top_proc_part.split()
+            if len(parts) >= 4:
+                data["top_process"] = f"{parts[0]} 运行 {parts[3]} (CPU:{parts[1]}% 内存:{parts[2]}%)"
+
+        return data, True, ""
+
+    except Exception as e:
+        data["error_message"] = str(e)
+        return data, False, str(e)
+    finally:
+        if client:
+            client.close()
+
+
 def _do_monitor_server(server_id):
     """实际执行 SSH 采集的工作线程（由线程池调度）"""
     if server_id in running_tasks:
@@ -297,88 +386,15 @@ def _do_monitor_server(server_id):
     running_tasks.add(server_id)
 
     db = SessionLocal()
-    client = None
     try:
         server = db.query(Server).filter(Server.id == server_id).first()
         if not server or not server.is_active:
             return
 
-        # 采集结果默认值（失败时同样回写，前端据此展示离线原因）
-        data = {
-            "uptime_seconds": 0, "cpu_percent": 0, "cpu_cores": 1,
-            "ram_total_mb": 0, "ram_used_mb": 0, "ram_percent": 0,
-            "gpu_data": [], "top_process": "暂无",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-        }
+        data, ok, _ = collect_server_data(server)
 
-        try:
-            # 远端执行一条组合命令，一次 SSH 会话拿齐所有数据（段间用 <<<XXX>>> 标记）
-            cmd = (
-                "export PATH=$PATH:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin; "
-                "echo '<<<UPTIME>>>'; cat /proc/uptime; "
-                "echo '<<<RAM>>>'; free -m; "
-                "echo '<<<CPU>>>'; top -bn1 | head -n 5; "
-                "echo '<<<CORES>>>'; nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo; "
-                "echo '<<<GPU>>>'; timeout 15 nvidia-smi -q -x 2>/dev/null || echo 'NO_GPU'; "
-                "echo '<<<GPUPW>>>'; nvidia-smi --query-gpu=power.draw,power.max_limit --format=csv,noheader 2>/dev/null || echo 'NO_GPU'; "
-                "echo '<<<TOP_PROC>>>'; ps -eo user,%cpu,%mem,comm --sort=-%cpu | head -n 2 | tail -n 1; "
-                "echo '<<<END>>>'"
-            )
-
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            target_host = server.ip_address if server.ip_address else server.hostname
-
-            client.connect(
-                hostname=target_host,
-                port=server.ssh_port,
-                username=server.ssh_user or "root",
-                timeout=15,  # 超时设短，防止假死拖垮线程池
-            )
-
-            _, stdout, _ = client.exec_command(cmd, timeout=15)
-            output = stdout.read().decode("utf-8", errors="ignore")
-
-            # 逐段解析
-            data["uptime_seconds"] = parse_uptime(get_section(output, "UPTIME"))
-            ram_info = parse_ram(get_section(output, "RAM"))
-            data["ram_total_mb"] = ram_info["total_mb"]
-            data["ram_used_mb"] = ram_info["used_mb"]
-            data["ram_percent"] = ram_info["percent"]
-            data["cpu_percent"] = parse_cpu(get_section(output, "CPU"))
-
-            try:
-                data["cpu_cores"] = int(re.search(r"(\d+)", get_section(output, "CORES")).group(1))
-            except Exception:
-                pass
-
-            # GPU 段：无卡时命令输出 NO_GPU，跳过解析
-            gpu_part = get_section(output, "GPU")
-            if "NO_GPU" not in gpu_part and gpu_part.strip():
-                start = gpu_part.find("<")
-                if start != -1:
-                    data["gpu_data"] = parse_gpu(gpu_part[start:])
-
-            # GPU 功率：优先用 CSV 查询结果修正（query 接口格式稳定，不受驱动 XML 结构变化影响）
-            gpu_pw_part = get_section(output, "GPUPW")
-            if "NO_GPU" not in gpu_pw_part and gpu_pw_part.strip():
-                pw_rows = parse_gpu_power_csv(gpu_pw_part)
-                for i, gpu in enumerate(data["gpu_data"]):
-                    if i < len(pw_rows):
-                        draw, limit = pw_rows[i]
-                        if draw and draw > 0:
-                            gpu["power_draw"] = draw
-                        if limit and limit > 0:
-                            gpu["power_limit"] = limit
-
-            # 当前 CPU 占用最高的进程
-            top_proc_part = get_section(output, "TOP_PROC")
-            if top_proc_part:
-                parts = top_proc_part.split()
-                if len(parts) >= 4:
-                    data["top_process"] = f"{parts[0]} 运行 {parts[3]} (CPU:{parts[1]}% 内存:{parts[2]}%)"
-
-            # 成功采集：节点从离线恢复时补发恢复邮件
+        if ok:
+            # 节点从离线恢复时补发恢复邮件
             if server.status == "offline" and server.last_alert_time:
                 recovery_content = (
                     f"✅ 节点已恢复\n\n"
@@ -387,25 +403,20 @@ def _do_monitor_server(server_id):
                     f"现已重新建立 SSH 监控连接。"
                 )
                 send_email_wrapper(db, subject=f"【恢复】服务器 {server.hostname} 已恢复上线", content=recovery_content)
-                server.last_alert_time = None  # 清空告警记录
+                server.last_alert_time = None
 
             server.status = "online"
             server.last_online = datetime.utcnow()
             server.offline_since = None
             server.latest_status_data = data
-
-        except Exception as e:
+        else:
             # 采集失败：标记离线并记录首次离线时间
             server.status = "offline"
             if not server.offline_since:
                 server.offline_since = datetime.utcnow()
-            data["error_message"] = str(e)
             server.latest_status_data = data
 
-        finally:
-            db.commit()
-            if client:
-                client.close()
+        db.commit()
 
     finally:
         db.close()
@@ -419,6 +430,28 @@ def monitor_all_servers():
         servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
         for server in servers:
             executor.submit(_do_monitor_server, server.id)
+    finally:
+        db.close()
+
+
+def monitor_once():
+    """启动时立即执行一次全量采集（阻塞，确保首次打开页面就有数据）"""
+    db = SessionLocal()
+    try:
+        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
+        for server in servers:
+            data, ok, _ = collect_server_data(server)
+            if ok:
+                server.status = "online"
+                server.last_online = datetime.utcnow()
+                server.offline_since = None
+            else:
+                server.status = "offline"
+                if not server.offline_since:
+                    server.offline_since = datetime.utcnow()
+            server.latest_status_data = data
+        db.commit()
+        print(f"✅ 启动采集完成：{len(servers)} 台节点")
     finally:
         db.close()
 

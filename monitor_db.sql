@@ -42,6 +42,10 @@ create index ix_server_stats_server_id
 create index ix_server_stats_timestamp
     on server_stats (timestamp);
 
+-- 复合索引：加速按 server_id + 时间范围的历史查询
+create index ix_server_stats_sid_ts
+    on server_stats (server_id, timestamp);
+
 create table servers
 (
     id                 int auto_increment

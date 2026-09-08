@@ -64,8 +64,9 @@
 import { ref, onMounted, nextTick, shallowRef } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '../api'
+import { useServers } from '../composables/useServers'
 
-const servers = ref([])
+const { servers, subscribe } = useServers()
 const showChartModal = ref(false)
 const currentServer = ref(null)
 const isLoading = ref(false)
@@ -74,12 +75,7 @@ const currentRange = ref(1)
 const chartRef = ref(null)
 const myChart = shallowRef(null)
 
-const fetchServers = async () => {
-  try {
-    const res = await api.getServers()
-    servers.value = res.data
-  } catch (error) { console.error('获取列表失败', error) }
-}
+// 服务器列表通过 SSE 实时推送
 
 const openChart = async (server) => {
   currentServer.value = server
@@ -187,7 +183,7 @@ const closeChart = () => {
   }
 }
 
-onMounted(() => fetchServers())
+onMounted(() => subscribe())
 </script>
 
 <style scoped>

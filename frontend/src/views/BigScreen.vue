@@ -235,13 +235,13 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
 import { api } from '../api'
+import { useServers } from '../composables/useServers'
 
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
-const servers = ref([])
+const { servers, subscribe } = useServers()
 const currentTime = ref('--:--:--')
 const currentDate = ref('')
 let timer = null
-let dataTimer = null
 
 const barChartRef = ref(null)
 const barChart = shallowRef(null)
@@ -259,13 +259,7 @@ const bigKline = shallowRef(null)
 const MARKET_SYMBOL = '90.BK1036'   // 东方财富「半导体」行业板块指数
 let marketTimer = null
 
-// ---------- 数据拉取 ----------
-const fetchServers = async () => {
-  try {
-    const res = await api.getServers()
-    servers.value = res.data
-  } catch (error) { console.error('数据拉取失败', error) }
-}
+// ---------- 服务器数据通过 SSE 实时推送，无需手动拉取 ----------
 
 // ---------- 天气（Open-Meteo，自动定位） ----------
 const WEATHER_CODES = {
@@ -643,18 +637,17 @@ const tickClock = () => {
 }
 
 onMounted(() => {
-  fetchServers()
+  subscribe()      // SSE 实时推送服务器数据
   fetchWeather()
   fetchMarket()
   tickClock()
-  dataTimer = setInterval(fetchServers, 60000)   // 监控数据：60 秒刷新
   marketTimer = setInterval(fetchMarket, 60000)  // 行情 K 线：60 秒刷新
   timer = setInterval(tickClock, 1000)
   window.addEventListener('resize', () => { barChart.value?.resize(); miniKline.value?.resize(); bigKline.value?.resize() })
 })
 
 onUnmounted(() => {
-  clearInterval(timer); clearInterval(dataTimer); clearInterval(marketTimer)
+  clearInterval(timer); clearInterval(marketTimer)
   barChart.value?.dispose(); miniKline.value?.dispose(); bigKline.value?.dispose()
 })
 </script>

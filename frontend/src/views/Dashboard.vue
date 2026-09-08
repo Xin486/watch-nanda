@@ -133,30 +133,19 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import RingChart from '../components/RingChart.vue'
 import { api } from '../api'
+import { useServers } from '../composables/useServers'
 
 const route = useRoute()
-const servers = ref([])
+const { servers, subscribe } = useServers()
 const searchQuery = ref('')
 const currentTime = ref(new Date().toLocaleTimeString())
 let timer = null
-let dataTimer = null
 
 const showEditModal = ref(false)
 const editForm = ref({})
 const availableGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
 
-const fetchServers = async () => {
-  try {
-    const res = await api.getServers()
-    servers.value = res.data
-
-    // 同步数据库分组到编辑表单的候选列表
-    const dbGroups = res.data.map(s => s.group_name)
-    availableGroups.value = Array.from(new Set([...availableGroups.value, ...dbGroups])).filter(Boolean)
-  } catch (error) { 
-    console.error('获取监控流失败', error) 
-  }
-}
+// 服务器数据通过 SSE 实时推送，无需手动拉取
 
 const filteredServers = computed(() => {
   let list = servers.value
@@ -219,15 +208,12 @@ const saveServerInfo = async () => {
 }
 
 onMounted(() => {
-  fetchServers()
-  dataTimer = setInterval(fetchServers, 60000)
+  subscribe()   // 建立 SSE 连接，实时接收服务器数据
   timer = setInterval(() => { currentTime.value = new Date().toLocaleTimeString() }, 1000)
-  window.addEventListener('server-updated', fetchServers)
 })
 
-onUnmounted(() => { 
+onUnmounted(() => {
   clearInterval(timer)
-  clearInterval(dataTimer) 
 })
 </script>
 

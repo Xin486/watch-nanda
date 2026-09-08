@@ -75,6 +75,21 @@ bash stop.sh    # 一键安全关闭
 
 启动后访问：`http://<服务器IP>:3000`
 
+## 实时数据架构
+
+平台采用 **SSE (Server-Sent Events)** 替代传统轮询：
+
+- **后端**：`/api/stream/servers` 端点每 10 秒推送一次最新数据（只读数据库，不触发 SSH）
+- **SSH 采集**：每 60 秒并发采集一次
+- **前端**：`useServers` composable 管理单例 EventSource 连接，多组件共享
+- **启动即采集**：FastAPI 启动时立即执行一次全量 SSH 采集，页面刷新后零延迟
+- **历史查询优化**：`server_stats` 表的 `(server_id, timestamp)` 复合索引加速历史曲线加载
+
+运行 `add_index.sql` 可为已有数据库添加复合索引（新建库已包含）：
+```bash
+mysql -u root -p monitor_db < add_index.sql
+```
+
 ## 目录结构
 
 ```
@@ -82,9 +97,10 @@ watch-nanda/
 ├── setup.sh                  # 一键环境初始化（.env + Docker MySQL + 建表 + 依赖）
 ├── start.sh / stop.sh        # 启停脚本
 ├── monitor_db.sql            # 数据库建表语句
+├── add_index.sql             # 历史查询性能优化索引（可选执行）
 ├── README.md
 ├── backend/                  # FastAPI 后端
-│   ├── main.py               # API 路由入口
+│   ├── main.py               # API 路由入口 + SSE 实时推送端点
 │   ├── requirements.txt      # 依赖清单
 │   ├── .env.example          # 数据库连接配置模板
 │   ├── .env                  # 实际配置（本地修改，不入库）
@@ -93,7 +109,9 @@ watch-nanda/
 │   └── worker/tasks.py       # SSH 采集 / 告警 / 定时调度
 └── frontend/                 # Vue 3 前端
     └── src/
-        ├── api.js            # 统一后端 API 封装
+        ├── api.js            # 统一后端 API 封装（REST 接口）
+        ├── composables/      # 组合式函数
+        │   └── useServers.js # SSE 实时数据推送（替代 60s 轮询）
         ├── App.vue           # 全局外壳（侧边栏 + 路由出口）
         ├── components/       # 通用组件（环形进度图等）
         └── views/            # 控制台 / 大屏 / 历史 / 设置 / 清理

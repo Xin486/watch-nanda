@@ -5,6 +5,9 @@
  * - 前端 Vite   : http://<主机>:3000
  * - 后端 FastAPI : http://<主机>:7980
  * 因此只需取当前页面主机名 + 固定端口即可定位后端。
+ *
+ * 注意：服务器实时数据已改为 SSE 推送（见 composables/useServers.js），
+ *       直接连接 http://<主机>:7980/api/stream/servers，不经过本模块。
  */
 import axios from 'axios'
 

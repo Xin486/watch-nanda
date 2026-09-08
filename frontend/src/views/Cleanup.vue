@@ -40,19 +40,11 @@
 
 <script setup>
 // 数据清理页：历史数据清理与节点删除
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { api } from '../api'
+import { useServers } from '../composables/useServers'
 
-const servers = ref([])
-
-const fetchServers = async () => {
-  try {
-    const res = await api.getServers()
-    servers.value = res.data
-  } catch (error) {
-    console.error('获取节点列表失败', error)
-  }
-}
+const { servers, subscribe } = useServers()
 
 // 🧹 清理该节点的所有折线图历史数据
 const cleanHistory = async (server) => {
@@ -75,9 +67,7 @@ const deleteServer = async (server) => {
   try {
     await api.deleteServer(server.id)
     alert('✅ 服务器及关联数据已彻底删除！')
-    
-    // 重新拉取列表，并触发全局更新事件（让侧边栏和Dashboard大屏同步消失）
-    await fetchServers()
+    // SSE 会在下一个推送周期自动刷新列表，无需手动拉取
     window.dispatchEvent(new CustomEvent('server-updated'))
   } catch (error) {
     alert('删除失败，请检查网络或后端日志')
@@ -85,7 +75,7 @@ const deleteServer = async (server) => {
 }
 
 onMounted(() => {
-  fetchServers()
+  subscribe()
 })
 </script>
 
