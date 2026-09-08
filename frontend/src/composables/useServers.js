@@ -1,75 +1,105 @@
 /**
  * 服务器数据实时推送 composable
  * --------------------------------
- * 用 Server-Sent Events 替代原来的 60 秒轮询：
- *   - 订阅时立即 REST 拉一次，页面秒开
- *   - 后端每 10 秒通过 SSE 推送最新数据（只读数据库缓存，不触发 SSH 采集）
- *   - 单例 EventSource：多个组件共享同一条连接，最后一个组件卸载时自动关闭
- *   - 组件卸载时自动退订，无内存泄漏
+ * 双通道保障，数据永远不断：
+ *   1. SSE 主通道：后端每 10 秒推送，连接成功时实时更新
+ *   2. REST 兜底：每 15 秒轮询一次，SSE 断开时保底
+ *   3. 首次订阅立即 REST 拉取，页面秒开
  */
 import { ref, onUnmounted } from 'vue'
 import axios from 'axios'
 
-// ── 模块级单例 ──────────────────────────────────────────────
+// ── 模块级单例状态 ─────────────────────────────────────────
 let eventSource = null
 let subscribers = 0
+let fallbackTimer = null
+let restFallbackActive = false
 const servers = ref([])
-let fetched = false  // 是否已做过首次 REST 拉取
+let initialized = false
 
 const BASE = `http://${window.location.hostname}:7980`
 
-function open () {
+// ── REST 拉取 ─────────────────────────────────────────────
+function fetchOnce () {
+  axios.get(`${BASE}/api/servers`).then(res => {
+    servers.value = res.data
+  }).catch(() => {})
+}
+
+// ── REST 兜底轮询（SSE 死了也不怕）────────────────────────
+function startFallback () {
+  if (fallbackTimer) return
+  restFallbackActive = true
+  fallbackTimer = setInterval(() => {
+    fetchOnce()
+  }, 15000)
+}
+
+function stopFallback () {
+  if (fallbackTimer) {
+    clearInterval(fallbackTimer)
+    fallbackTimer = null
+  }
+  restFallbackActive = false
+}
+
+// ── SSE 主通道 ────────────────────────────────────────────
+function openSSE () {
   if (eventSource) return
   eventSource = new EventSource(`${BASE}/api/stream/servers`)
 
   eventSource.onmessage = (e) => {
     try {
       servers.value = JSON.parse(e.data)
+      // SSE 工作正常，停掉兜底轮询
+      stopFallback()
     } catch { /* 忽略解析错误 */ }
   }
 
   eventSource.onerror = () => {
-    eventSource.close()
-    eventSource = null
+    // 不手动 close：让浏览器自动重连
+    // 启动兜底轮询，重连期间数据不中断
+    startFallback()
   }
-
-  // 任何页面执行 CRUD 后 dispatch 此事件，立即拉取最新数据
-  window.addEventListener('servers-refresh', () => {
-    axios.get(`${BASE}/api/servers`).then(res => {
-      servers.value = res.data
-    }).catch(() => {})
-  })
 }
 
-function close () {
+function closeSSE () {
   if (eventSource) {
     eventSource.close()
     eventSource = null
   }
 }
 
-// ── 组合式函数 ─────────────────────────────────────────────
+// ── CRUD 刷新（只绑定一次）────────────────────────────────
+let refreshBound = false
+function bindRefresh () {
+  if (refreshBound) return
+  refreshBound = true
+  window.addEventListener('servers-refresh', () => fetchOnce())
+}
+
+// ── 组合式函数 ────────────────────────────────────────────
 export function useServers () {
   const subscribe = () => {
     subscribers++
 
-    // 首次订阅：立即 REST 拉一次，页面秒开不等 SSE
-    if (!fetched) {
-      fetched = true
-      axios.get(`${BASE}/api/servers`).then(res => {
-        servers.value = res.data
-      }).catch(() => {})
+    // 首次订阅：立即拉一次 + 启动兜底 + 建立 SSE
+    if (!initialized) {
+      initialized = true
+      fetchOnce()           // 立即出数据
+      startFallback()       // 兜底轮询先开着
+      openSSE()             // SSE 连上后会自动停掉兜底
+      bindRefresh()         // CRUD 后立即刷新
     }
-
-    open()
   }
 
   onUnmounted(() => {
     subscribers--
     if (subscribers <= 0) {
       subscribers = 0
-      fetched = false
-      close()
+      initialized = false
+      stopFallback()
+      closeSSE()
     }
   })
 
