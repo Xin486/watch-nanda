@@ -32,6 +32,13 @@ function open () {
     eventSource.close()
     eventSource = null
   }
+
+  // 任何页面执行 CRUD 后 dispatch 此事件，立即拉取最新数据
+  window.addEventListener('servers-refresh', () => {
+    axios.get(`${BASE}/api/servers`).then(res => {
+      servers.value = res.data
+    }).catch(() => {})
+  })
 }
 
 function close () {

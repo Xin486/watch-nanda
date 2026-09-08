@@ -200,8 +200,7 @@ const saveServerInfo = async () => {
   try {
     await api.updateServer(editForm.value.id, editForm.value)
     showEditModal.value = false
-    await fetchServers()
-    window.dispatchEvent(new CustomEvent('server-updated')) 
+    window.dispatchEvent(new CustomEvent('servers-refresh')) 
   } catch (error) { 
     alert('配置数据保存同步失败，请检查后端 FastAPI 状态。') 
   }

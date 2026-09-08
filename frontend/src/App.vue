@@ -121,6 +121,7 @@ const submitAddServer = async () => {
     await api.addServer(addForm.value)
     alert('服务器添加成功！后台将在一分钟内尝试连接。')
     showAddModal.value = false
+    window.dispatchEvent(new CustomEvent('servers-refresh'))
   } catch (error) {
     alert('添加失败，请检查网络')
   }

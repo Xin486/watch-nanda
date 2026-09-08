@@ -54,6 +54,7 @@ const cleanHistory = async (server) => {
   try {
     await api.clearHistory(server.id)
     alert('✅ 历史数据已成功清空！')
+    window.dispatchEvent(new CustomEvent('servers-refresh'))
   } catch (error) {
     alert('清理失败，请检查网络或后端日志')
   }
@@ -67,8 +68,7 @@ const deleteServer = async (server) => {
   try {
     await api.deleteServer(server.id)
     alert('✅ 服务器及关联数据已彻底删除！')
-    // SSE 会在下一个推送周期自动刷新列表，无需手动拉取
-    window.dispatchEvent(new CustomEvent('server-updated'))
+    window.dispatchEvent(new CustomEvent('servers-refresh'))
   } catch (error) {
     alert('删除失败，请检查网络或后端日志')
   }
