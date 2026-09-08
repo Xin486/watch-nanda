@@ -82,28 +82,23 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from './api'
+import { useServers } from './composables/useServers'
 
 const route = useRoute()
+const { servers, subscribe } = useServers()
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
-const dbGroups = ref([])
 const customGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
 
 // 弹窗状态与表单
 const showAddModal = ref(false)
 const addForm = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22 })
 
+// 分组直接从 SSE 推送的 servers 数据实时派生，无需单独请求
 const allGroups = computed(() => {
-  const set = new Set([...dbGroups.value, ...customGroups.value])
+  const dbGroups = [...new Set(servers.value.map(s => s.group_name))]
+  const set = new Set([...dbGroups, ...customGroups.value])
   return Array.from(set).filter(g => g && g.trim() !== '')
 })
-
-// 拉取所有节点的分组名（来自数据库）
-const fetchGroups = async () => {
-  try {
-    const res = await api.getServers()
-    dbGroups.value = [...new Set(res.data.map(s => s.group_name))]
-  } catch (error) { console.error('获取分组失败', error) }
-}
 
 const addNewGroup = () => {
   const name = prompt('请输入新分组名称：\n(新增后在编辑/添加服务器时填入此名称即可归入该组)')
@@ -126,7 +121,6 @@ const submitAddServer = async () => {
     await api.addServer(addForm.value)
     alert('服务器添加成功！后台将在一分钟内尝试连接。')
     showAddModal.value = false
-    window.dispatchEvent(new CustomEvent('server-updated'))
   } catch (error) {
     alert('添加失败，请检查网络')
   }
@@ -138,20 +132,16 @@ const updatePageTitle = () => {
 }
 
 onMounted(() => {
-  fetchGroups()
-  
-  // 1. 初次加载时，立刻设置标题
+  subscribe()   // 建立 SSE 连接，侧边栏分组随数据实时更新
   updatePageTitle()
-  
-  // 2. 监听事件
-  window.addEventListener('server-updated', fetchGroups)
+
   window.addEventListener('storage', () => {
     companyName.value = localStorage.getItem('companyName') || '南大仙林'
-    updatePageTitle() // 同步更新网页标题
+    updatePageTitle()
   })
 })
 
-// 3. 监听路由跳转，防止某些浏览器在跳转时自动重置标题
+// 监听路由跳转，防止某些浏览器在跳转时自动重置标题
 watch(() => route.path, () => {
   updatePageTitle()
 })

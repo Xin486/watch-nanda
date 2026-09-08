@@ -2,16 +2,19 @@
  * 服务器数据实时推送 composable
  * --------------------------------
  * 用 Server-Sent Events 替代原来的 60 秒轮询：
- *   - 后端每 10 秒推送一次最新数据（只读数据库缓存，不触发 SSH 采集）
+ *   - 订阅时立即 REST 拉一次，页面秒开
+ *   - 后端每 10 秒通过 SSE 推送最新数据（只读数据库缓存，不触发 SSH 采集）
  *   - 单例 EventSource：多个组件共享同一条连接，最后一个组件卸载时自动关闭
  *   - 组件卸载时自动退订，无内存泄漏
  */
 import { ref, onUnmounted } from 'vue'
+import axios from 'axios'
 
 // ── 模块级单例 ──────────────────────────────────────────────
-let eventSource = null        // 单例 SSE 连接
-let subscribers = 0           // 当前订阅计数
-const servers = ref([])       // 共享的服务器数据（所有组件看到的是同一个 ref）
+let eventSource = null
+let subscribers = 0
+const servers = ref([])
+let fetched = false  // 是否已做过首次 REST 拉取
 
 const BASE = `http://${window.location.hostname}:7980`
 
@@ -26,7 +29,6 @@ function open () {
   }
 
   eventSource.onerror = () => {
-    // 连接断开 → 关闭，下次 subscribe 时重新打开
     eventSource.close()
     eventSource = null
   }
@@ -39,10 +41,19 @@ function close () {
   }
 }
 
-// ── 组合式函数（每个调用的组件会自动订阅/退订）──────────────
+// ── 组合式函数 ─────────────────────────────────────────────
 export function useServers () {
   const subscribe = () => {
     subscribers++
+
+    // 首次订阅：立即 REST 拉一次，页面秒开不等 SSE
+    if (!fetched) {
+      fetched = true
+      axios.get(`${BASE}/api/servers`).then(res => {
+        servers.value = res.data
+      }).catch(() => {})
+    }
+
     open()
   }
 
@@ -50,6 +61,7 @@ export function useServers () {
     subscribers--
     if (subscribers <= 0) {
       subscribers = 0
+      fetched = false
       close()
     }
   })
