@@ -5,5 +5,5 @@
 -- =============================================================
 
 -- 复合索引：覆盖最常见的历史查询模式 (WHERE server_id=? AND timestamp>=?)
-CREATE INDEX IF NOT EXISTS ix_server_stats_sid_ts
+CREATE INDEX ix_server_stats_sid_ts
     ON server_stats (server_id, timestamp);
