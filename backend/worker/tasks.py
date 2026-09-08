@@ -435,20 +435,42 @@ def monitor_all_servers():
 
 
 def monitor_once():
-    """启动时立即执行一次全量采集（用线程池并发，不阻塞 FastAPI 启动）"""
+    """启动时立即执行一次全量采集（用线程池并发，不阻塞 FastAPI 启动）
+
+    注意：不走 _do_monitor_server，避免内存锁 running_tasks 导致
+    线程池分批提交时第二批被跳过。
+    """
     db = SessionLocal()
     try:
         servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
     finally:
         db.close()
 
-    # 复用已有线程池并发采集，不阻塞启动流程
+    def _collect_and_save(server_id):
+        db = SessionLocal()
+        try:
+            server = db.query(Server).filter(Server.id == server_id).first()
+            if not server or not server.is_active:
+                return
+            data, ok, _ = collect_server_data(server)
+            if ok:
+                server.status = "online"
+                server.last_online = datetime.utcnow()
+                server.offline_since = None
+            else:
+                server.status = "offline"
+                if not server.offline_since:
+                    server.offline_since = datetime.utcnow()
+            server.latest_status_data = data
+            db.commit()
+        finally:
+            db.close()
+
     futures = []
     for server in servers:
-        futures.append(executor.submit(_do_monitor_server, server.id))
+        futures.append(executor.submit(_collect_and_save, server.id))
 
-    # 等待所有采集完成（最多 90 秒），超时则放弃，不拖慢启动
-    from concurrent.futures import wait, Timeout
+    from concurrent.futures import wait
     done, not_done = wait(futures, timeout=90)
     print(f"✅ 启动采集完成：{len(done)}/{len(servers)} 台节点（{len(not_done)} 台超时跳过）")
 
