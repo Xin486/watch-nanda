@@ -76,29 +76,61 @@ import { api } from '../api'
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const pageTitle = ref(localStorage.getItem('pageTitle') || 'Node Monitor')
 
-const alertForm = ref({ enable_email_alert: false, offline_threshold_minutes: 5, alert_recipient: '' })
-const emailForm = ref({ smtp_server: '', smtp_port: 465, smtp_user: '', smtp_password: '', from_name: 'Node Monitor', from_address: '', use_tls: true })
+// ── 缓存键 ────────────────────────────────────────────────
+const CACHE_ALERT = 'settings_alert'
+const CACHE_EMAIL = 'settings_email'  // 不含密码
+
+// ── 从缓存反序列化（失败则返回 null）────────────────────
+function readCache(key) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+// ── 默认值 ────────────────────────────────────────────────
+const alertDefault = { enable_email_alert: false, offline_threshold_minutes: 5, alert_recipient: '' }
+const emailDefault  = { smtp_server: '', smtp_port: 465, smtp_user: '', smtp_password: '', from_name: 'Node Monitor', from_address: '', use_tls: true }
+
+// ── 初始值优先读缓存，让页面秒开 ─────────────────────────
+const cachedAlert = readCache(CACHE_ALERT)
+const cachedEmail = readCache(CACHE_EMAIL)
+
+const alertForm = ref(cachedAlert ? { ...alertDefault, ...cachedAlert } : { ...alertDefault })
+// 邮件表单：缓存里不含密码，password 先留空，等后台返回后填入
+const emailForm = ref(cachedEmail ? { ...emailDefault, ...cachedEmail, smtp_password: '' } : { ...emailDefault })
 const isTesting = ref(false)
 
+// ── 后台静默同步（不阻塞渲染）────────────────────────────
 const loadConfigs = async () => {
   try {
-    const resAlert = await api.getAlertSettings()
-    if (resAlert.data) alertForm.value = resAlert.data
+    const [resAlert, resEmail] = await Promise.all([
+      api.getAlertSettings(),
+      api.getEmailSettings(),
+    ])
 
-    const resEmail = await api.getEmailSettings()
-    if (resEmail.data) emailForm.value = resEmail.data
-  } catch (error) { console.error('加载配置失败') }
+    if (resAlert.data) {
+      alertForm.value = resAlert.data
+      // 告警规则完整缓存（无敏感信息）
+      localStorage.setItem(CACHE_ALERT, JSON.stringify(resAlert.data))
+    }
+
+    if (resEmail.data) {
+      emailForm.value = resEmail.data
+      // 邮件配置缓存时剔除密码
+      const { smtp_password, ...safeEmail } = resEmail.data
+      localStorage.setItem(CACHE_EMAIL, JSON.stringify(safeEmail))
+    }
+  } catch (error) {
+    // 网络或后端不通时静默降级——页面已用缓存数据展示，无需报错
+    console.warn('设置页后台同步失败，使用本地缓存数据', error)
+  }
 }
 
 const saveBaseSettings = () => {
-  // 1. 存入本地缓存
   localStorage.setItem('companyName', companyName.value)
   localStorage.setItem('pageTitle', pageTitle.value)
-  
-  // 2. 立即修改浏览器网页标签
   document.title = pageTitle.value
-  
-  // 3. 通知其他组件(如侧边栏)更新
   window.dispatchEvent(new Event('storage'))
   alert('✅ 系统设置已保存并生效')
 }
@@ -106,6 +138,8 @@ const saveBaseSettings = () => {
 const saveAlertSettings = async () => {
   try {
     await api.saveAlertSettings(alertForm.value)
+    // 保存成功后同步更新缓存
+    localStorage.setItem(CACHE_ALERT, JSON.stringify(alertForm.value))
     alert('✅ 告警规则已保存')
   } catch (e) { alert('保存失败') }
 }
@@ -113,6 +147,9 @@ const saveAlertSettings = async () => {
 const saveEmailSettings = async () => {
   try {
     await api.saveEmailSettings(emailForm.value)
+    // 保存成功后缓存非敏感字段，密码不落本地
+    const { smtp_password, ...safeEmail } = emailForm.value
+    localStorage.setItem(CACHE_EMAIL, JSON.stringify(safeEmail))
     alert('✅ 发件配置已保存')
   } catch (e) { alert('保存失败') }
 }
@@ -132,6 +169,7 @@ const testEmail = async () => {
 }
 
 onMounted(() => {
+  // 先用缓存渲染，再异步从后端同步最新值
   loadConfigs()
 })
 </script>
