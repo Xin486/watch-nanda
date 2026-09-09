@@ -9,6 +9,16 @@
       <div class="center-area"><span class="time-display">🕒 {{ currentTime }}</span></div>
       <div class="filters">
         <input type="text" placeholder="全局检索节点..." class="search-input" v-model="searchQuery">
+        <button
+          class="btn-filter-offline"
+          :class="{ active: showOfflineOnly }"
+          @click="showOfflineOnly = !showOfflineOnly"
+          :title="showOfflineOnly ? '当前仅显示离线节点，点击恢复全部' : '一键筛选离线节点'"
+        >
+          <span class="btn-icon">🔴</span>
+          <span class="btn-text">{{ showOfflineOnly ? '离线筛选中' : '筛选离线' }}</span>
+          <span class="offline-count" v-if="!showOfflineOnly && offlineCount > 0">{{ offlineCount }}</span>
+        </button>
         <router-link to="/bigscreen" class="btn-toggle-mode">
           <span class="btn-icon">🖥️</span><span class="btn-text">进入算力大屏</span>
         </router-link>
@@ -138,6 +148,7 @@ import { useServers } from '../composables/useServers'
 const route = useRoute()
 const { servers, subscribe } = useServers()
 const searchQuery = ref('')
+const showOfflineOnly = ref(false)
 const currentTime = ref(new Date().toLocaleTimeString())
 let timer = null
 
@@ -147,9 +158,12 @@ const availableGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '
 
 // 服务器数据通过 SSE 实时推送，无需手动拉取
 
+const offlineCount = computed(() => servers.value.filter(s => s.status === 'offline').length)
+
 const filteredServers = computed(() => {
   let list = servers.value
   if (route.query.group) list = list.filter(s => s.group_name === route.query.group)
+  if (showOfflineOnly.value) list = list.filter(s => s.status === 'offline')
   if (searchQuery.value) {
     list = list.filter(s => s.hostname.includes(searchQuery.value) || s.ip_address.includes(searchQuery.value))
   }
@@ -231,6 +245,11 @@ onUnmounted(() => {
 .search-input { padding: 8px 12px; border-radius: 4px; outline: none; width: 180px; font-size: 13px; border: 1px solid #e2e8f0; }
 
 .btn-toggle-mode { display: flex; align-items: center; gap: 6px; padding: 8px 18px; border-radius: 20px; font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: none; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: #fff; box-shadow: 0 2px 6px rgba(37,99,235, 0.3); }
+
+.btn-filter-offline { position: relative; display: flex; align-items: center; gap: 6px; padding: 8px 18px; border-radius: 20px; font-weight: 600; cursor: pointer; font-size: 13px; border: 1.5px solid #e2e8f0; background: #fff; color: #475569; transition: all 0.2s; }
+.btn-filter-offline:hover { border-color: #fca5a5; background: #fef2f2; color: #ef4444; }
+.btn-filter-offline.active { background: #fef2f2; border-color: #ef4444; color: #ef4444; box-shadow: 0 2px 6px rgba(239,68,68,0.2); }
+.offline-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; line-height: 1; }
 
 .server-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
 .server-card { border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; transition: transform 0.2s, box-shadow 0.2s; }
