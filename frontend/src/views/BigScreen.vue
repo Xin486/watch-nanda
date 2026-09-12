@@ -75,6 +75,7 @@
               </div>
             </div>
 
+            <div class="freshness-summary"><span>数据过期 <b>{{ staleServers.length }}</b></span><span>待采集 <b>{{ pendingServers.length }}</b></span></div>
             <div class="load-section">
               <div class="load-item">
                 <div class="load-label"><span>高负载节点 &gt;80%</span><span class="c-orange">{{ highLoadServers.length }}</span></div>
@@ -175,22 +176,22 @@
             <span class="corner tl"></span><span class="corner tr"></span>
             <span class="corner bl"></span><span class="corner br"></span>
             <div class="panel-head head-between">
-              <span class="head-left"><i class="ph-ico">🚨</i><h3>离线告警日志</h3></span>
-              <span class="head-sub" :class="{ 'sub-danger': offlineServers.length > 0 }">
-                {{ offlineServers.length > 0 ? offlineServers.length + ' 条告警' : '运行正常' }}
+              <span class="head-left"><i class="ph-ico">🚨</i><h3>节点状态提醒</h3></span>
+              <span class="head-sub" :class="{ 'sub-danger': attentionServers.length > 0 }">
+                {{ attentionServers.length > 0 ? attentionServers.length + ' 条提醒' : '运行正常' }}
               </span>
             </div>
-            <ul class="alert-list" v-if="offlineServers.length > 0">
-              <li v-for="s in offlineServers" :key="s.id">
+            <ul class="alert-list" v-if="attentionServers.length > 0">
+              <li v-for="s in attentionServers" :key="s.id" :class="s.status">
                 <span class="alert-dot"></span>
                 <div class="alert-body">
                   <span class="alert-name">{{ s.hostname }}</span>
-                  <span class="alert-ip">{{ s.ip_address }} · 连接丢失</span>
+                  <span class="alert-ip">{{ s.ip_address }} · {{ ageLabel(s.data_age_seconds) }}</span>
                 </div>
-                <span class="alert-tag">LOST</span>
+                <span class="alert-tag">{{ statusLabel(s.status) }}</span>
               </li>
             </ul>
-            <div class="empty-state" v-else>✅ 当前无离线告警，集群运行稳定</div>
+            <div class="empty-state" v-else>✅ 所有节点采集正常，数据保持更新</div>
           </div>
         </aside>
       </main>
@@ -234,6 +235,7 @@
 // 算力大屏：科技风全景监控（分组矩阵 / 区域占用排行 / 告警日志 / GPU 型号分布 / 天气）
 import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
+import { statusLabel, ageLabel } from '../utils/serverStatus'
 import { api } from '../api'
 import { useServers } from '../composables/useServers'
 
@@ -350,6 +352,9 @@ const fetchMarket = async () => {
 const onlineServers = computed(() => servers.value.filter(s => s.status === 'online'))
 const offlineServers = computed(() => servers.value.filter(s => s.status === 'offline'))
 const totalOnlineServers = computed(() => onlineServers.value.length)
+const staleServers = computed(() => servers.value.filter(s => s.status === 'stale'))
+const pendingServers = computed(() => servers.value.filter(s => s.status === 'pending'))
+const attentionServers = computed(() => [...offlineServers.value, ...staleServers.value, ...pendingServers.value])
 const offlineCount = computed(() => offlineServers.value.length)
 
 const matrixData = computed(() => {
@@ -457,6 +462,7 @@ function useAnimatedNumber(source) {
     }
     raf = requestAnimationFrame(step)
   }, { immediate: true })
+  onUnmounted(() => cancelAnimationFrame(raf))
   return display
 }
 const gpuCountAnimated = useAnimatedNumber(totalGPUs)
@@ -468,7 +474,8 @@ const renderCharts = () => {
   if (!barChart.value && barChartRef.value) barChart.value = echarts.init(barChartRef.value)
   if (barChart.value) {
     const stats = gpuModelStats.value
-    const TOP = 8
+    const chartHeight = barChartRef.value?.clientHeight || 190
+    const TOP = Math.max(3, Math.min(8, Math.floor((chartHeight - 12) / 22) - 1))
     let items = stats.slice(0, TOP)
     if (stats.length > TOP) {
       const restCount = stats.slice(TOP).reduce((s, e) => s + e.count, 0)
@@ -503,7 +510,7 @@ const renderCharts = () => {
         data: labels,
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { color: '#a9c8e8', fontSize: 12, margin: 12 }
+        axisLabel: { color: '#a9c8e8', fontSize: 12, margin: 12, interval: 0 }
       },
       series: [{
         type: 'bar',
@@ -626,7 +633,7 @@ watch(marketData, () => {
   })
 })
 
-watch(servers, () => { nextTick(() => renderCharts()) }, { deep: true })
+watch(() => JSON.stringify(gpuModelStats.value), () => { nextTick(() => renderCharts()) })
 
 // ---------- 时钟 ----------
 const week = ['日', '一', '二', '三', '四', '五', '六']
@@ -636,17 +643,20 @@ const tickClock = () => {
   currentDate.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} 星期${week[d.getDay()]}`
 }
 
+const resizeCharts = () => { barChart.value?.resize(); renderCharts(); miniKline.value?.resize(); bigKline.value?.resize() }
 onMounted(() => {
+  nextTick(renderCharts)
   subscribe()      // SSE 实时推送服务器数据
   fetchWeather()
   fetchMarket()
   tickClock()
   marketTimer = setInterval(fetchMarket, 60000)  // 行情 K 线：60 秒刷新
   timer = setInterval(tickClock, 1000)
-  window.addEventListener('resize', () => { barChart.value?.resize(); miniKline.value?.resize(); bigKline.value?.resize() })
+  window.addEventListener('resize', resizeCharts)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', resizeCharts)
   clearInterval(timer); clearInterval(marketTimer)
   barChart.value?.dispose(); miniKline.value?.dispose(); bigKline.value?.dispose()
 })
@@ -908,4 +918,50 @@ onUnmounted(() => {
 /* ==================== 底部：柱状图 ==================== */
 .bottom-panel { height: 100%; display: flex; flex-direction: column; }
 .echart-box-horizontal { flex: 1; width: 100%; }
+.alert-list li.stale { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.3); }
+.alert-list li.pending { background: rgba(148,163,184,.08); border-color: rgba(148,163,184,.3); }
+.stale .alert-name, .stale .alert-tag { color: #fbbf24; }
+.pending .alert-name, .pending .alert-tag { color: #94a3b8; }
+.stale .alert-dot { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+.pending .alert-dot { background: #94a3b8; box-shadow: none; }
+.alert-tag { white-space: nowrap; }
+.freshness-summary { display: flex; gap: 8px; margin: 8px 0; }
+.freshness-summary span { flex: 1; display: flex; justify-content: space-between; gap: 6px; padding: 5px 8px; background: rgba(245,158,11,.06); border: 1px solid rgba(245,158,11,.18); border-radius: 4px; color: #8fb3d0; font-size: 11px; white-space: nowrap; }
+.freshness-summary b { color: #fbbf24; }
+.bottom-panel, .bs-bottom { box-sizing: border-box; }
+.bs-left { overflow-y: auto; }
+.bs-left::-webkit-scrollbar { width: 5px; }
+.bs-left::-webkit-scrollbar-thumb { background: rgba(34,211,238,.3); border-radius: 4px; }
+@media (min-width: 1151px) and (max-height: 850px) {
+  .bs-header { height: 64px; }
+  .bs-bottom { height: 180px; }
+  .bs-left .tech-panel { padding: 10px 12px; }
+  .bs-left .panel-head { margin-bottom: 8px; padding-bottom: 7px; }
+  .gpu-hero { padding: 0 0 6px; } .gpu-num { font-size: 40px; }
+  .rate-ring { width: 70px; height: 70px; } .rate-inner { width: 54px; height: 54px; }
+  .rate-val { font-size: 16px; } .rate-row { gap: 12px; padding: 4px; }
+  .rate-line b { font-size: 14px; } .rate-detail { gap: 6px; }
+  .load-section { margin-top: 6px; gap: 8px; } .status-list li { padding: 6px; }
+  .status-list .v { font-size: 14px; } .rank-panel { height: 250px; }
+}
+@media (max-width: 1500px) {
+  .bs-main { grid-template-columns: 245px minmax(0, 1fr) 280px; gap: 10px; padding: 10px; }
+  .title-wing { width: 28px; } .title { font-size: 22px; } .subtitle { letter-spacing: 2px; }
+  .header-right { gap: 8px; } .weather { padding: 4px 6px; } .market-mini { width: 70px; }
+  .tech-panel { padding: 12px; } .head-sub { letter-spacing: 0; }
+}
+@media (max-width: 1150px) {
+  .bs-wrap { overflow-y: auto; } .bs-layout { min-height: 100%; height: auto; }
+  .bs-header { flex-wrap: wrap; height: auto; min-height: 76px; gap: 12px; padding: 12px; }
+  .bs-main { flex: none; grid-template-columns: 220px minmax(0,1fr); overflow: visible; }
+  .bs-right { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
+  .bs-center { min-height: 500px; } .matrix-container { max-height: 650px; }
+  .rank-panel { height: 280px; } .alert-panel { max-height: 280px; }
+  .bs-bottom { height: 230px; }
+}
+@media (max-width: 700px) {
+  .bs-main { grid-template-columns: minmax(0,1fr); }
+  .bs-right { grid-template-columns: minmax(0,1fr); }
+  .header-right { flex-wrap: wrap; } .header-center { order: -1; width: 100%; justify-content: center; }
+}
 </style>

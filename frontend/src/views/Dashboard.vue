@@ -5,6 +5,8 @@
         <div class="stat-item"><span class="label">总节点</span><span class="value total-val">{{ servers.length }}</span></div>
         <div class="stat-item"><span class="label">在线</span><span class="value text-green">{{ servers.filter(s => s.status === 'online').length }}</span></div>
         <div class="stat-item"><span class="label">离线</span><span class="value text-red">{{ servers.filter(s => s.status === 'offline').length }}</span></div>
+        <div class="stat-item"><span class="label">数据过期</span><span class="value text-amber">{{ servers.filter(s => s.status === 'stale').length }}</span></div>
+        <div class="stat-item"><span class="label">待采集</span><span class="value text-muted">{{ servers.filter(s => s.status === 'pending').length }}</span></div>
       </div>
       <div class="center-area"><span class="time-display">🕒 {{ currentTime }}</span></div>
       <div class="filters">
@@ -25,15 +27,17 @@
       </div>
     </header>
 
+    <div class="freshness-notice" v-if="servers.some(s => s.status === 'stale')">部分节点采集数据已过期，等待下一次更新；过期不代表节点已离线。</div>
+    <div class="empty-results" v-if="!filteredServers.length">{{ showOfflineOnly ? '当前筛选范围内没有离线节点' : '没有匹配的节点' }}</div>
     <div class="server-grid">
       <div class="server-card clickable-card" v-for="server in filteredServers" :key="server.id" :class="server.status" @click="openEditModal(server)">
         <div class="card-header">
           <div class="server-info">
             <strong class="host-title">{{ server.hostname }}</strong>
             <span class="ip-addr">{{ server.ip_address }}</span>
-            <span class="time">更新: {{ formatTime(server.timestamp) }}</span>
+            <span class="time">{{ ageLabel(server.data_age_seconds) }}</span>
           </div>
-          <div class="status-badge" :class="server.status">{{ server.status === 'online' ? 'ON' : 'OFF' }}</div>
+          <div class="status-badge" :class="server.status">{{ statusLabel(server.status) }}</div>
         </div>
 
         <div class="card-body" v-if="server.status === 'online'">
@@ -63,7 +67,7 @@
             </div>
           </div>
         </div>
-        <div class="card-body offline-body" v-else>NODE OFFLINE</div>
+        <div class="card-body offline-body" v-else><span>{{ statusLabel(server.status) }}</span><small>{{ server.status === 'stale' ? '暂不展示过期指标，正在等待采集更新' : server.status === 'pending' ? '后台将自动开始采集' : 'SSH 采集未能建立连接' }}</small></div>
       </div>
     </div>
 
@@ -76,30 +80,30 @@
         
         <div class="dual-layout">
           <div class="metrics-pane">
-            <h4 class="pane-title">📊 实时性能指标</h4>
-            <div class="metric-box" v-if="editForm.status === 'online'">
+            <h4 class="pane-title">📊 实时性能指标</h4><p class="metrics-updated">{{ ageLabel(selectedServer.data_age_seconds) }}</p>
+            <div class="metric-box" v-if="selectedServer.status === 'online'">
               <div class="metric-item">
-                <div class="metric-label"><span>CPU 使用率</span><span>{{ editForm.cpu_percent }}% ({{ editForm.cpu_cores }} 核)</span></div>
-                <div class="progress-bar"><div class="progress-fill bg-green" :style="{ width: editForm.cpu_percent + '%' }"></div></div>
+                <div class="metric-label"><span>CPU 使用率</span><span>{{ selectedServer.cpu_percent }}% ({{ selectedServer.cpu_cores }} 核)</span></div>
+                <div class="progress-bar"><div class="progress-fill bg-green" :style="{ width: selectedServer.cpu_percent + '%' }"></div></div>
               </div>
               <div class="metric-item">
-                <div class="metric-label"><span>内存使用率</span><span>{{ Math.round(editForm.ram_used_mb/1024) }}G / {{ Math.round(editForm.ram_total_mb/1024) }}G ({{ editForm.ram_percent }}%)</span></div>
-                <div class="progress-bar"><div class="progress-fill bg-amber" :style="{ width: editForm.ram_percent + '%' }"></div></div>
+                <div class="metric-label"><span>内存使用率</span><span>{{ Math.round(selectedServer.ram_used_mb/1024) }}G / {{ Math.round(selectedServer.ram_total_mb/1024) }}G ({{ selectedServer.ram_percent }}%)</span></div>
+                <div class="progress-bar"><div class="progress-fill bg-amber" :style="{ width: selectedServer.ram_percent + '%' }"></div></div>
               </div>
               <div class="metric-item top-proc-box">
                 <div class="metric-label"><span class="text-orange">🔥 当前最高占用进程</span></div>
-                <div class="proc-name">{{ editForm.top_process }}</div>
+                <div class="proc-name">{{ selectedServer.top_process }}</div>
               </div>
-              <div class="gpu-detailed-section" v-if="editForm.gpu_data && editForm.gpu_data.length > 0">
-                <div class="metric-label"><span>🎮 NVIDIA 显卡详情 ({{ editForm.gpu_data.length }} 张)</span></div>
-                <div class="gpu-detail-card" v-for="(gpu, index) in editForm.gpu_data" :key="index">
+              <div class="gpu-detailed-section" v-if="selectedServer.gpu_data && selectedServer.gpu_data.length > 0">
+                <div class="metric-label"><span>🎮 NVIDIA 显卡详情 ({{ selectedServer.gpu_data.length }} 张)</span></div>
+                <div class="gpu-detail-card" v-for="(gpu, index) in selectedServer.gpu_data" :key="index">
                   <div class="gpu-meta">
                     <span class="gpu-idx">
                       <svg class="icon-svg-blue" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
                       GPU {{ index }}
                     </span>
                     <span class="gpu-model">{{ gpu.model }}</span>
-                    <span class="gpu-temp" :class="{ 'hot': parseInt(gpu.temp) > 80 }">🌡️ {{ gpu.temp }}°C</span>
+                    <span class="gpu-temp" :class="{ 'hot': parseInt(gpu.temp) > 80 }">🌡️ {{ Number.isFinite(parseFloat(gpu.temp)) ? parseFloat(gpu.temp) : '--' }}°C</span>
                   </div>
                   <div class="gpu-mem-text">显存: {{ gpu.memory_used }} / {{ gpu.memory_total }} ({{ gpu.memory_percent }}%)</div>
                   <div class="progress-bar mini"><div class="progress-fill bg-red" :style="{ width: gpu.memory_percent + '%' }"></div></div>
@@ -107,7 +111,7 @@
               </div>
               <div class="no-gpu-hint" v-else>❌ 该服务器未检测到 NVIDIA 显卡</div>
             </div>
-            <div class="modal-offline-state" v-else>⚠️ 节点当前处于离线状态，无法抓取实时监控数据。</div>
+            <div class="modal-offline-state" v-else>{{ statusLabel(selectedServer.status) }} · {{ ageLabel(selectedServer.data_age_seconds) }}</div>
           </div>
 
           <div class="form-pane">
@@ -127,7 +131,7 @@
             </div>
             <div class="modal-actions">
               <button class="btn-cancel" @click="showEditModal = false">取消</button>
-              <button class="btn-save" @click="saveServerInfo">保存配置修改</button>
+              <button class="btn-save" :disabled="saving" @click="saveServerInfo">{{ saving ? '保存中…' : '保存配置修改' }}</button>
             </div>
           </div>
         </div>
@@ -143,6 +147,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import RingChart from '../components/RingChart.vue'
 import { api } from '../api'
+import { statusLabel, ageLabel } from '../utils/serverStatus'
 import { useServers } from '../composables/useServers'
 
 const route = useRoute()
@@ -154,6 +159,8 @@ let timer = null
 
 const showEditModal = ref(false)
 const editForm = ref({})
+const selectedServer = computed(() => servers.value.find(s => s.id === editForm.value.id) || { status: 'pending' })
+const saving = ref(false)
 const availableGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
 
 // 服务器数据通过 SSE 实时推送，无需手动拉取
@@ -165,7 +172,7 @@ const filteredServers = computed(() => {
   if (route.query.group) list = list.filter(s => s.group_name === route.query.group)
   if (showOfflineOnly.value) list = list.filter(s => s.status === 'offline')
   if (searchQuery.value) {
-    list = list.filter(s => s.hostname.includes(searchQuery.value) || s.ip_address.includes(searchQuery.value))
+    list = list.filter(s => (s.hostname || '').includes(searchQuery.value) || (s.ip_address || '').includes(searchQuery.value))
   }
   return list
 })
@@ -197,26 +204,23 @@ const openEditModal = (server) => {
     group_name: server.group_name,
     ssh_user: server.ssh_user || 'root', 
     ssh_port: server.ssh_port || 22, 
-    status: server.status,
-    cpu_percent: server.cpu_percent || 0, 
-    cpu_cores: server.cpu_cores || 1, 
-    ram_percent: server.ram_percent || 0,
-    ram_used_mb: server.ram_used_mb || 0, 
-    ram_total_mb: server.ram_total_mb || 0, 
-    gpu_data: server.gpu_data || [],
-    top_process: server.top_process || '暂无'
+
   }
   showEditModal.value = true
 }
 
 // 提交节点配置修改到后端
 const saveServerInfo = async () => {
+  if (saving.value) return
+  saving.value = true
   try {
     await api.updateServer(editForm.value.id, editForm.value)
     showEditModal.value = false
     window.dispatchEvent(new CustomEvent('servers-refresh')) 
   } catch (error) { 
     alert('配置数据保存同步失败，请检查后端 FastAPI 状态。') 
+  } finally {
+    saving.value = false
   }
 }
 
@@ -325,4 +329,23 @@ onUnmounted(() => {
 .btn-cancel:hover { background: #f1f5f9; }
 .btn-save { padding: 9px 16px; border: none; background: #3b82f6; color: white; border-radius: 4px; cursor: pointer; font-weight: bold; }
 .btn-save:hover { background: #2563eb; }
+.text-amber { color: #d97706; }
+.text-muted { color: #64748b; }
+.server-card.stale { border-color: #fcd34d; background: #fffdf5; }
+.server-card.pending { border-color: #cbd5e1; background: #f8fafc; }
+.status-badge.stale { color: #92400e; background: #fef3c7; }
+.status-badge.pending { color: #475569; background: #e2e8f0; }
+.stale .offline-body { color: #b45309; }
+.pending .offline-body { color: #64748b; }
+.offline-body small { font-weight: 400; font-size: 12px; }
+.freshness-notice { padding: 12px 16px; margin-bottom: 18px; border: 1px solid #fde68a; border-radius: 8px; background: #fffbeb; color: #92400e; font-size: 13px; }
+.empty-results { padding: 64px 20px; text-align: center; color: #64748b; }
+.metrics-updated { font-size: 12px; color: #64748b; margin-top: -5px; }
+.top-bar { flex-wrap: wrap; gap: 18px; }
+.stats { gap: 20px; }
+.server-info { flex-wrap: wrap; min-width: 0; }
+.host-title { overflow-wrap: anywhere; }
+.modal-content { max-height: 90vh; overflow-y: auto; box-sizing: border-box; }
+@media (max-width: 1100px) { .center-area { display: none; } .filters { flex-wrap: wrap; } }
+@media (max-width: 700px) { .dual-layout { grid-template-columns: 1fr; } .server-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

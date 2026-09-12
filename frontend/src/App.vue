@@ -50,38 +50,16 @@
       <router-view />
     </main>
 
-    <!-- 新增服务器弹窗 -->
-    <div class="modal-overlay" v-if="showAddModal" @click.self="showAddModal = false">
-      <div class="modal-content">
-        <h3>新增监控节点</h3>
-        <div class="form-grid">
-          <div class="form-item"><label>主机名 (必填)</label><input type="text" v-model="addForm.hostname" placeholder="例如: 姚-ceph-62"></div>
-          <div class="form-item"><label>IP 地址 (必填)</label><input type="text" v-model="addForm.ip_address" placeholder="例如: 192.168.1.100"></div>
-          <div class="form-item">
-            <label>分组名称</label>
-            <input type="text" v-model="addForm.group_name" list="add-group-suggestions" placeholder="留空则为未分组">
-            <datalist id="add-group-suggestions">
-              <option v-for="g in allGroups" :key="g" :value="g"></option>
-            </datalist>
-          </div>
-          <div class="form-item"><label>SSH 用户名</label><input type="text" v-model="addForm.ssh_user"></div>
-          <div class="form-item"><label>SSH 端口</label><input type="number" v-model="addForm.ssh_port"></div>
-        </div>
-        <p class="hint-text">注意：添加前请确保已配置服务器免密 SSH 登录，否则节点将一直显示离线。</p>
-        <div class="modal-actions">
-          <button class="btn-cancel" @click="showAddModal = false">取消</button>
-          <button class="btn-save" @click="submitAddServer">确认添加</button>
-        </div>
-      </div>
-    </div>
+    <AddServerModal v-if="showAddModal" :groups="allGroups" @close="showAddModal = false" @created="onServerCreated" />
+    <div v-if="addNotice" class="add-node-success" role="status"><span aria-hidden="true">✓</span>{{ addNotice }}</div>
   </div>
 </template>
 
 <script setup>
 // 全局外壳组件：左侧导航栏 + 路由出口 + 新增服务器弹窗
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api } from './api'
+import AddServerModal from './components/AddServerModal.vue'
 import { useServers } from './composables/useServers'
 
 const route = useRoute()
@@ -91,7 +69,9 @@ const customGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'
 
 // 弹窗状态与表单
 const showAddModal = ref(false)
-const addForm = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22 })
+const addNotice = ref('')
+let noticeTimer = null
+onUnmounted(() => clearTimeout(noticeTimer))
 
 // 分组直接从 SSE 推送的 servers 数据实时派生，无需单独请求
 const allGroups = computed(() => {
@@ -108,23 +88,13 @@ const addNewGroup = () => {
   }
 }
 
-const openAddServerModal = () => {
-  addForm.value = { hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22 }
-  showAddModal.value = true
-}
-
-const submitAddServer = async () => {
-  if (!addForm.value.hostname || !addForm.value.ip_address) {
-    return alert('主机名和 IP 地址不能为空！')
-  }
-  try {
-    await api.addServer(addForm.value)
-    alert('服务器添加成功！后台将在一分钟内尝试连接。')
-    showAddModal.value = false
-    window.dispatchEvent(new CustomEvent('servers-refresh'))
-  } catch (error) {
-    alert('添加失败，请检查网络')
-  }
+const openAddServerModal = () => { showAddModal.value = true }
+const onServerCreated = () => {
+  showAddModal.value = false
+  window.dispatchEvent(new CustomEvent('servers-refresh'))
+  addNotice.value = '服务器已添加，正在等待首次采集。'
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => { addNotice.value = '' }, 5000)
 }
 
 // 同步浏览器标签页标题
@@ -180,4 +150,14 @@ html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9; font-fami
 .btn-cancel { padding: 8px 16px; border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; cursor: pointer; color: #475569; }
 .btn-save { padding: 8px 16px; border: none; background: #3b82f6; color: white; border-radius: 4px; cursor: pointer; font-weight: bold; }
 .btn-save:hover { background: #2563eb; }
+.node-status { font-weight: 600; white-space: nowrap; }
+.node-status.online { color: #059669; }
+.node-status.offline { color: #dc2626; }
+.node-status.stale { color: #d97706; }
+.node-status.pending { color: #64748b; }
+button:disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 1100px) { .sidebar { width: 190px; flex-shrink: 0; } }
+@media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 16px 10px; } .menu-item { padding: 12px 10px; } }
+.add-node-success { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 14px 20px; box-sizing: border-box; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; color: #166534; font-size: 13px; box-shadow: 0 8px 28px #0f172a1a; }
+.add-node-success span { display: grid; place-items: center; flex-shrink: 0; width: 21px; height: 21px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 13px; }
 </style>

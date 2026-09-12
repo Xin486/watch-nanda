@@ -77,6 +77,30 @@ bash stop.sh    # 一键安全关闭
 
 ## 实时数据架构
 
+### 采集与数据新鲜度
+
+- SSH 采集分为读取配置、无数据库连接的网络采集、短事务写回三个阶段。
+- 启动和每分钟调度共用去重队列；同一节点排队或执行期间不会再次提交。
+- REST 与 SSE 共用状态计算：`online` 在线、`offline` 明确采集失败、
+  `stale` 数据过期、`pending` 尚未采集。`collection_status` 保留最近采集结果。
+- `latest_status_data.timestamp` 是采集完成时间；无需修改已有数据库表。
+- `STALE_AFTER_SECONDS` 环境变量控制过期阈值，默认 180 秒，最小 60 秒。
+  浏览器按服务端数据年龄持续计时，网络断开时也会显示过期。
+- 过期数据不计入大屏在线算力，历史快照以对应状态记录，查询时显示为空值缺口。
+- SMTP 密码读取接口仅返回 `has_password`；保存时省略 `smtp_password` 保留原值。
+
+### 回归测试
+
+```bash
+python3 -m unittest discover -s backend/tests -v
+cd frontend
+node --test tests/state.test.mjs
+npm run build
+```
+
+后端测试使用独立临时 SQLite，SSH 与 SMTP 均模拟，不访问生产节点或发送邮件。
+前端状态测试覆盖 SSE/REST 竞争、断流后的过期判断、表单编辑保护、历史请求乱序及详情实时指标。
+
 平台采用 **SSE (Server-Sent Events)** 替代传统轮询：
 
 - **后端**：`/api/stream/servers` 端点每 10 秒推送一次最新数据（只读数据库，不触发 SSH）

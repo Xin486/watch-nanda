@@ -11,6 +11,11 @@
 - flush_stats_to_db   : 每 10 分钟 把实时缓存快照写入历史表
 - check_server_alerts : 每 60 秒   离线告警巡检
 """
+import logging
+import time
+from threading import Lock
+from types import SimpleNamespace
+
 import re
 import smtplib
 import xml.etree.ElementTree as ET
@@ -22,11 +27,15 @@ from email.utils import formataddr
 import paramiko
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from core.status import freshness
 from models.database import SessionLocal
 from models.models import AlertConfig, EmailConfig, Server, ServerStats
 
 # 内存级并发锁：记录正在采集的 Server ID，防止同一节点重复采集
 running_tasks = set()
+tasks_lock = Lock()
+logger = logging.getLogger(__name__)
+scheduler = None
 
 # SSH 采集线程池（最多同时并发采集 50 台服务器）
 executor = ThreadPoolExecutor(max_workers=50)
@@ -203,13 +212,17 @@ def send_email_wrapper(db, subject, content, recipient=None, is_test=False):
 
     返回 (是否成功, 提示信息)。465 端口走 SSL，其余端口可开启 STARTTLS。
     """
-    email_config = db.query(EmailConfig).first()
-    alert_config = db.query(AlertConfig).first()
+    # 凭据读完即归还连接，SMTP 网络等待不占数据库连接。
+    with SessionLocal() as config_db:
+        row = config_db.query(EmailConfig).first()
+        email_config = SimpleNamespace(**{c.name: getattr(row, c.name) for c in EmailConfig.__table__.columns}) if row else None
+        alert = config_db.query(AlertConfig).first()
+        default_recipient = alert.alert_recipient if alert else None
 
     if not email_config or not email_config.smtp_server:
         return False, "SMTP未配置"
 
-    target_recipient = recipient or (alert_config.alert_recipient if alert_config else None)
+    target_recipient = recipient or default_recipient
     if not target_recipient:
         return False, "未设置接收人邮箱"
 
@@ -241,50 +254,32 @@ def send_email_wrapper(db, subject, content, recipient=None, is_test=False):
 # 离线告警巡检（每分钟执行一次）
 # ---------------------------------------------------------------------------
 def check_server_alerts():
-    """扫描离线节点，超过阈值发告警邮件（同一节点 24 小时内不重复发送）"""
-    db = SessionLocal()
-    try:
-        alert_config = db.query(AlertConfig).first()
-        if not alert_config or not alert_config.enable_email_alert:
-            return  # 未开启邮件告警，直接跳过
-
-        threshold = alert_config.offline_threshold_minutes or 5
-        now = datetime.utcnow()
-
-        offline_servers = db.query(Server).filter(
-            Server.is_active == True,  # noqa: E712
-            Server.status == "offline",
-            Server.offline_since != None,  # noqa: E711
-        ).all()
-
-        for server in offline_servers:
-            # 已离线时长（分钟）
-            duration_mins = (now - server.offline_since).total_seconds() / 60
-
-            if duration_mins < threshold:
+    """仅对新鲜且明确失败的采集告警，平台采集停滞不冒充节点离线。"""
+    now = datetime.utcnow()
+    with SessionLocal() as db:
+        config = db.query(AlertConfig).first()
+        if not config or not config.enable_email_alert:
+            return
+        threshold = config.offline_threshold_minutes or 5
+        candidates = []
+        for server in db.query(Server).filter(Server.is_active == True, Server.status == "offline").all():
+            if freshness(server, now)[0] != "offline" or not server.offline_since:
                 continue
-
-            # 未发过告警，或距上次告警已超过 24 小时（防止邮件轰炸）
+            if (now - server.offline_since).total_seconds() < threshold * 60:
+                continue
             if server.last_alert_time and (now - server.last_alert_time).total_seconds() <= 86400:
                 continue
-
-            content = (
-                f"⚠️ 节点宕机告警\n\n"
-                f"主机名: {server.hostname}\n"
-                f"IP地址: {server.ip_address}\n"
-                f"分组: {server.group_name}\n\n"
-                f"已失联时间超过设定的安全阈值 ({threshold} 分钟)。\n"
-                f"请及时登录机房终端进行排查！"
-            )
-            success, _ = send_email_wrapper(
-                db, subject=f"【告警】服务器 {server.hostname} 已离线", content=content
-            )
-
-            if success:
-                server.last_alert_time = now  # 记录告警时间，防止重复发送
+            candidates.append((server.id, server.hostname, server.ip_address, server.offline_since))
+    for sid, hostname, address, offline_since in candidates:
+        success, message = send_email_wrapper(None, f"【告警】服务器 {hostname} 已离线",
+            f"节点 {hostname} ({address}) 已失联超过 {threshold} 分钟，请检查。")
+        if success:
+            with SessionLocal() as db:
+                db.query(Server).filter(Server.id == sid, Server.status == "offline",
+                    Server.offline_since == offline_since).update({Server.last_alert_time: now})
                 db.commit()
-    finally:
-        db.close()
+        else:
+            logger.warning("Alert delivery failed for node %s: %s", sid, message)
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +306,7 @@ def collect_server_data(server):
             "echo '<<<CPU>>>'; top -bn1 | head -n 5; "
             "echo '<<<CORES>>>'; nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo; "
             "echo '<<<GPU>>>'; timeout 15 nvidia-smi -q -x 2>/dev/null || echo 'NO_GPU'; "
-            "echo '<<<GPUPW>>>'; nvidia-smi --query-gpu=power.draw,power.max_limit --format=csv,noheader 2>/dev/null || echo 'NO_GPU'; "
+            "echo '<<<GPUPW>>>'; timeout 15 nvidia-smi --query-gpu=power.draw,power.max_limit --format=csv,noheader 2>/dev/null || echo 'NO_GPU'; "
             "echo '<<<TOP_PROC>>>'; ps -eo user,%cpu,%mem,comm --sort=-%cpu | head -n 2 | tail -n 1; "
             "echo '<<<END>>>'"
         )
@@ -324,7 +319,7 @@ def collect_server_data(server):
             hostname=target_host,
             port=server.ssh_port,
             username=server.ssh_user or "root",
-            timeout=15,
+            timeout=15, banner_timeout=15, auth_timeout=15,
         )
 
         _, stdout, _ = client.exec_command(cmd, timeout=15)
@@ -375,104 +370,80 @@ def collect_server_data(server):
         data["error_message"] = str(e)
         return data, False, str(e)
     finally:
+        data["timestamp"] = datetime.utcnow().isoformat() + "Z"
         if client:
             client.close()
 
 
+CONFIG_FIELDS = ("hostname", "ip_address", "ssh_port", "ssh_user", "group_name")
+
+
 def _do_monitor_server(server_id):
-    """实际执行 SSH 采集的工作线程（由线程池调度）"""
-    if server_id in running_tasks:
-        return  # 内存锁：该节点正在采集中
-    running_tasks.add(server_id)
-
-    db = SessionLocal()
+    """读配置 / 无连接 SSH / 短事务写回；同一节点排队及执行期间均去重。"""
+    started = time.monotonic()
     try:
-        server = db.query(Server).filter(Server.id == server_id).first()
-        if not server or not server.is_active:
-            return
-
-        data, ok, _ = collect_server_data(server)
-
-        if ok:
-            # 节点从离线恢复时补发恢复邮件
-            if server.status == "offline" and server.last_alert_time:
-                recovery_content = (
-                    f"✅ 节点已恢复\n\n"
-                    f"主机名: {server.hostname}\n"
-                    f"IP地址: {server.ip_address}\n"
-                    f"现已重新建立 SSH 监控连接。"
-                )
-                send_email_wrapper(db, subject=f"【恢复】服务器 {server.hostname} 已恢复上线", content=recovery_content)
-                server.last_alert_time = None
-
-            server.status = "online"
-            server.last_online = datetime.utcnow()
-            server.offline_since = None
-            server.latest_status_data = data
-        else:
-            # 采集失败：标记离线并记录首次离线时间
-            server.status = "offline"
-            if not server.offline_since:
-                server.offline_since = datetime.utcnow()
-            server.latest_status_data = data
-
-        db.commit()
-
+        with SessionLocal() as db:
+            row = db.query(Server).filter(Server.id == server_id, Server.is_active == True).first()
+            if row is None:
+                return
+            config = {key: getattr(row, key) for key in CONFIG_FIELDS}
+        data, ok, error = collect_server_data(SimpleNamespace(**config))
+        data["timestamp"] = datetime.utcnow().isoformat() + "Z"
+        data["collection_duration_seconds"] = round(time.monotonic() - started, 3)
+        recovery = False
+        with SessionLocal() as db:
+            # 锁定写入行，并检查配置，丢弃编辑前或删除前启动的旧任务结果。
+            row = db.query(Server).filter(Server.id == server_id).with_for_update().first()
+            if row is None or not row.is_active or any(getattr(row, key) != val for key, val in config.items()):
+                logger.info("Discarded obsolete collection for node %s", server_id)
+                return
+            now = datetime.utcnow()
+            if ok:
+                recovery = row.status == "offline" and bool(row.last_alert_time)
+                row.status, row.last_online, row.offline_since = "online", now, None
+                row.last_alert_time = None
+            else:
+                row.status = "offline"
+                row.offline_since = row.offline_since or now
+            row.latest_status_data = data
+            db.commit()
+        if recovery:
+            success, message = send_email_wrapper(None, f"【恢复】服务器 {config['hostname']} 已恢复上线",
+                f"节点 {config['hostname']} ({config['ip_address']}) 已恢复 SSH 连接。")
+            if not success:
+                logger.warning("Recovery delivery failed for node %s: %s", server_id, message)
+        if not ok:
+            logger.warning("Collection failed for node %s in %.2fs: %s", server_id, time.monotonic() - started, error)
+    except Exception:
+        logger.exception("Collection/persistence failed for node %s", server_id)
     finally:
-        db.close()
-        running_tasks.discard(server_id)  # 释放内存锁
+        with tasks_lock:
+            running_tasks.discard(server_id)
+
+
+def submit_server(server_id):
+    with tasks_lock:
+        if server_id in running_tasks:
+            return None
+        running_tasks.add(server_id)
+    try:
+        return executor.submit(_do_monitor_server, server_id)
+    except Exception:
+        with tasks_lock:
+            running_tasks.discard(server_id)
+        raise
 
 
 def monitor_all_servers():
-    """触发器（每 60 秒）：把所有活跃节点丢进线程池并发采集"""
-    db = SessionLocal()
-    try:
-        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
-        for server in servers:
-            executor.submit(_do_monitor_server, server.id)
-    finally:
-        db.close()
+    with SessionLocal() as db:
+        ids = [sid for (sid,) in db.query(Server.id).filter(Server.is_active == True).all()]
+    for sid in ids:
+        submit_server(sid)
 
 
 def monitor_once():
-    """启动时立即执行一次全量采集（用线程池并发，不阻塞 FastAPI 启动）
-
-    注意：不走 _do_monitor_server，避免内存锁 running_tasks 导致
-    线程池分批提交时第二批被跳过。
-    """
-    db = SessionLocal()
-    try:
-        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
-    finally:
-        db.close()
-
-    def _collect_and_save(server_id):
-        db = SessionLocal()
-        try:
-            server = db.query(Server).filter(Server.id == server_id).first()
-            if not server or not server.is_active:
-                return
-            data, ok, _ = collect_server_data(server)
-            if ok:
-                server.status = "online"
-                server.last_online = datetime.utcnow()
-                server.offline_since = None
-            else:
-                server.status = "offline"
-                if not server.offline_since:
-                    server.offline_since = datetime.utcnow()
-            server.latest_status_data = data
-            db.commit()
-        finally:
-            db.close()
-
-    futures = []
-    for server in servers:
-        futures.append(executor.submit(_collect_and_save, server.id))
-
-    from concurrent.futures import wait
-    done, not_done = wait(futures, timeout=90)
-    print(f"✅ 启动采集完成：{len(done)}/{len(servers)} 台节点（{len(not_done)} 台超时跳过）")
+    """启动与周期采集共用任务队列，启动无需等待全部 SSH 完成。"""
+    monitor_all_servers()
 
 
 def flush_stats_to_db():
@@ -483,17 +454,19 @@ def flush_stats_to_db():
         now = datetime.utcnow()
         for server in servers:
             data = server.latest_status_data or {}
+            effective_status, _ = freshness(server, now)
+            valid = effective_status == "online"
             db.add(ServerStats(
                 server_id=server.id,
                 timestamp=now,
-                status=server.status,
-                uptime_seconds=data.get("uptime_seconds", 0),
-                cpu_percent=data.get("cpu_percent", 0),
-                cpu_cores=data.get("cpu_cores", 1),
-                ram_total_mb=data.get("ram_total_mb", 0),
-                ram_used_mb=data.get("ram_used_mb", 0),
-                ram_percent=data.get("ram_percent", 0),
-                gpu_data=data.get("gpu_data", []),
+                status=effective_status,
+                uptime_seconds=data.get("uptime_seconds", 0) if valid else None,
+                cpu_percent=data.get("cpu_percent", 0) if valid else None,
+                cpu_cores=data.get("cpu_cores", 1) if valid else None,
+                ram_total_mb=data.get("ram_total_mb", 0) if valid else None,
+                ram_used_mb=data.get("ram_used_mb", 0) if valid else None,
+                ram_percent=data.get("ram_percent", 0) if valid else None,
+                gpu_data=data.get("gpu_data", []) if valid else None,
             ))
         db.commit()
     finally:
@@ -505,9 +478,20 @@ def flush_stats_to_db():
 # ---------------------------------------------------------------------------
 def start_scheduler():
     """注册并启动后台定时任务"""
+    global scheduler
+    if scheduler and scheduler.running:
+        return
     scheduler = BackgroundScheduler()
     scheduler.add_job(monitor_all_servers, "interval", seconds=60)      # 每分钟并发采集
     scheduler.add_job(flush_stats_to_db, "interval", minutes=10)        # 每 10 分钟历史落库
     scheduler.add_job(check_server_alerts, "interval", minutes=1)       # 每分钟告警巡检
     scheduler.start()
     print("🚀 APScheduler 已启动：包含 1 分钟采集任务、1 分钟告警巡视与 10 分钟落库任务。")
+
+
+def stop_scheduler():
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+    executor.shutdown(wait=True, cancel_futures=True)
+    with tasks_lock:
+        running_tasks.clear()

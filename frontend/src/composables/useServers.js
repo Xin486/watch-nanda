@@ -1,107 +1,73 @@
-/**
- * 服务器数据实时推送 composable
- * --------------------------------
- * 双通道保障，数据永远不断：
- *   1. SSE 主通道：后端每 10 秒推送，连接成功时实时更新
- *   2. REST 兜底：每 15 秒轮询一次，SSE 断开时保底
- *   3. 首次订阅立即 REST 拉取，页面秒开
- */
-import { ref, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import axios from 'axios'
+import { freshServer } from '../utils/serverStatus'
 
-// ── 模块级单例状态 ─────────────────────────────────────────
-let eventSource = null
-let subscribers = 0
-let fallbackTimer = null
-let restFallbackActive = false
-const servers = ref([])
-let initialized = false
-
+const rawServers = ref([])
+const elapsed = ref(0)
+const servers = computed(() => rawServers.value.map(s => freshServer(s, elapsed.value)))
 const BASE = `http://${window.location.hostname}:7980`
+let source = null, subscribers = 0, timer = null, fallbackTimer = null
+let controller = null, receivedAt = 0, lastEventAt = 0, generation = 0, revision = 0
 
-// ── REST 拉取 ─────────────────────────────────────────────
-function fetchOnce () {
-  axios.get(`${BASE}/api/servers`).then(res => {
-    servers.value = res.data
-  }).catch(() => {})
+function accept(data) {
+  if (!Array.isArray(data)) return
+  rawServers.value = data
+  receivedAt = performance.now()
+  elapsed.value = 0
+  revision++
 }
 
-// ── REST 兜底轮询（SSE 死了也不怕）────────────────────────
-function startFallback () {
-  if (fallbackTimer) return
-  restFallbackActive = true
-  fallbackTimer = setInterval(() => {
-    fetchOnce()
-  }, 15000)
+async function fetchOnce() {
+  controller?.abort()
+  const request = new AbortController()
+  controller = request
+  const currentGeneration = generation, currentRevision = revision
+  try {
+    const { data } = await axios.get(`${BASE}/api/servers`, { signal: request.signal, timeout: 12000 })
+    if (!request.signal.aborted && currentGeneration === generation && currentRevision === revision) accept(data)
+  } catch { /* 保留快照，计时器仍会将其标记为过期。 */ }
 }
 
-function stopFallback () {
-  if (fallbackTimer) {
-    clearInterval(fallbackTimer)
-    fallbackTimer = null
-  }
-  restFallbackActive = false
-}
-
-// ── SSE 主通道 ────────────────────────────────────────────
-function openSSE () {
-  if (eventSource) return
-  eventSource = new EventSource(`${BASE}/api/stream/servers`)
-
-  eventSource.onmessage = (e) => {
+function start() {
+  generation++
+  lastEventAt = 0
+  fetchOnce()
+  source = new EventSource(`${BASE}/api/stream/servers`)
+  source.onmessage = event => {
     try {
-      servers.value = JSON.parse(e.data)
-      // SSE 工作正常，停掉兜底轮询
-      stopFallback()
-    } catch { /* 忽略解析错误 */ }
+      const data = JSON.parse(event.data)
+      if (!Array.isArray(data)) return
+      lastEventAt = performance.now()
+      accept(data)
+    } catch { /* 下一次推送或 REST 兜底重试。 */ }
   }
-
-  eventSource.onerror = () => {
-    // 不手动 close：让浏览器自动重连
-    // 启动兜底轮询，重连期间数据不中断
-    startFallback()
-  }
+  source.onerror = () => { lastEventAt = 0 }
+  timer = setInterval(() => { elapsed.value = receivedAt ? (performance.now() - receivedAt) / 1000 : 0 }, 1000)
+  fallbackTimer = setInterval(() => {
+    if (!lastEventAt || performance.now() - lastEventAt > 25000) fetchOnce()
+  }, 15000)
+  window.addEventListener('servers-refresh', fetchOnce)
 }
 
-function closeSSE () {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
+function stop() {
+  generation++
+  controller?.abort()
+  source?.close()
+  source = null
+  clearInterval(timer)
+  clearInterval(fallbackTimer)
+  window.removeEventListener('servers-refresh', fetchOnce)
 }
 
-// ── CRUD 刷新（只绑定一次）────────────────────────────────
-let refreshBound = false
-function bindRefresh () {
-  if (refreshBound) return
-  refreshBound = true
-  window.addEventListener('servers-refresh', () => fetchOnce())
-}
-
-// ── 组合式函数 ────────────────────────────────────────────
-export function useServers () {
+export function useServers() {
+  let subscribed = false
   const subscribe = () => {
-    subscribers++
-
-    // 首次订阅：立即拉一次 + 启动兜底 + 建立 SSE
-    if (!initialized) {
-      initialized = true
-      fetchOnce()           // 立即出数据
-      startFallback()       // 兜底轮询先开着
-      openSSE()             // SSE 连上后会自动停掉兜底
-      bindRefresh()         // CRUD 后立即刷新
-    }
+    if (subscribed) return
+    subscribed = true
+    if (++subscribers === 1) start()
   }
-
   onUnmounted(() => {
-    subscribers--
-    if (subscribers <= 0) {
-      subscribers = 0
-      initialized = false
-      stopFallback()
-      closeSSE()
-    }
+    if (subscribed && --subscribers === 0) stop()
   })
-
   return { servers, subscribe }
 }

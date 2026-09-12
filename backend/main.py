@@ -18,7 +18,7 @@ from typing import Optional
 import asyncio
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 from models.database import SessionLocal, get_db
 from models.models import AlertConfig, EmailConfig, Server, ServerStats
-from worker.tasks import send_email_wrapper, start_scheduler, monitor_once, collect_server_data
+from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, monitor_once
+from core.status import server_payload
 
 # ---------------------------------------------------------------------------
 # 应用初始化
@@ -46,8 +47,13 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     """FastAPI 启动时立即执行一次全量采集，再拉起后台调度器"""
-    monitor_once()       # 阻塞采集，确保首次打开页面就有数据
-    start_scheduler()    # 拉起后台定时任务
+    start_scheduler()
+    monitor_once()  # 同一任务队列，后台采集，API 不等待 SSH
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    stop_scheduler()
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +89,7 @@ class EmailUpdate(BaseModel):
     smtp_server: Optional[str] = ""
     smtp_port: Optional[int] = 465
     smtp_user: Optional[str] = ""
-    smtp_password: Optional[str] = ""
+    smtp_password: Optional[str] = None
     from_name: Optional[str] = "Node Monitor"
     from_address: Optional[str] = ""
     use_tls: Optional[bool] = True
@@ -104,39 +110,7 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
         query = query.filter(Server.group_name == group)
     servers = query.all()
 
-    result = []
-    for server in servers:
-        data = server.latest_status_data or {}
-
-        # 兜底默认值：尚未完成首次采集的节点
-        if not data:
-            data = {
-                "status": server.status or "unknown",
-                "uptime_seconds": 0,
-                "cpu_percent": 0,
-                "cpu_cores": 0,
-                "ram_percent": 0,
-                "ram_used_mb": 0,
-                "ram_total_mb": 0,
-                "gpu_data": [],
-                "top_process": "暂无",
-                "timestamp": server.last_online.isoformat() + "Z" if server.last_online else None,
-            }
-        elif "top_process" not in data:
-            data["top_process"] = "暂无"
-
-        result.append({
-            "id": server.id,
-            "hostname": server.hostname,
-            "ip_address": server.ip_address,
-            "group_name": server.group_name,
-            "status": server.status,
-            # 前端编辑节点时需要回显 SSH 凭据
-            "ssh_user": server.ssh_user,
-            "ssh_port": server.ssh_port,
-            **data,
-        })
-    return result
+    return [server_payload(server) for server in servers]
 
 
 @app.post("/api/servers/add")
@@ -161,8 +135,15 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
     """更新节点基本信息"""
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
-        return {"error": "Server not found"}
+        raise HTTPException(status_code=404, detail="Server not found")
 
+    connection_changed = any(getattr(server, key) != getattr(data, key)
+                             for key in ("hostname", "ip_address", "ssh_user", "ssh_port"))
+    if connection_changed:
+        server.latest_status_data = None
+        server.status = "pending"
+        server.offline_since = None
+        server.last_alert_time = None
     server.hostname = data.hostname
     server.ip_address = data.ip_address
     server.group_name = data.group_name
@@ -193,43 +174,17 @@ def delete_server_node(server_id: int, db: Session = Depends(get_db)):
 async def stream_servers():
     """Server-Sent Events 端点：每 10 秒推送一次最新数据（只读 DB 缓存，不触发 SSH 采集）"""
 
-    def _build_payload(db):
-        """读取所有活跃节点，拼装与 /api/servers 相同结构的 JSON"""
-        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
-        result = []
-        for server in servers:
-            data = server.latest_status_data or {}
-            if not data:
-                data = {
-                    "status": server.status or "unknown",
-                    "uptime_seconds": 0, "cpu_percent": 0, "cpu_cores": 0,
-                    "ram_percent": 0, "ram_used_mb": 0, "ram_total_mb": 0,
-                    "gpu_data": [], "top_process": "暂无",
-                    "timestamp": server.last_online.isoformat() + "Z" if server.last_online else None,
-                }
-            elif "top_process" not in data:
-                data["top_process"] = "暂无"
-            result.append({
-                "id": server.id,
-                "hostname": server.hostname,
-                "ip_address": server.ip_address,
-                "group_name": server.group_name,
-                "status": server.status,
-                "ssh_user": server.ssh_user,
-                "ssh_port": server.ssh_port,
-                **data,
-            })
-        return result
+    def _build_payload():
+        with SessionLocal() as db:
+            now = datetime.utcnow()
+            return [server_payload(s, now) for s in db.query(Server).filter(Server.is_active == True).all()]
 
     async def event_generator():
         while True:
-            db = SessionLocal()
-            try:
-                payload = _build_payload(db)
-            finally:
-                db.close()
+            # 同步 SQL 放到线程中，不阻塞所有 SSE 客户端的事件循环。
+            payload = await asyncio.to_thread(_build_payload)
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(10)  # 每 10 秒推送一次（只读 DB，不触发 SSH）
+            await asyncio.sleep(10)
 
     return StreamingResponse(
         event_generator(),
@@ -244,6 +199,8 @@ async def stream_servers():
 @app.get("/api/server/{server_id}/history")
 def get_server_history(server_id: int, days: int = 1, db: Session = Depends(get_db)):
     """获取历史负载数据（≤7 天返回明细，>7 天按天聚合降采样，防止图表卡死）"""
+    if not 1 <= days <= 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
     cutoff_time = datetime.utcnow() - timedelta(days=days)
     stats = db.query(ServerStats).filter(
         ServerStats.server_id == server_id,
@@ -257,23 +214,26 @@ def get_server_history(server_id: int, days: int = 1, db: Session = Depends(get_
         for s in stats:
             data_points.append({
                 "time": s.timestamp.isoformat() + "Z",
-                "cpu": s.cpu_percent,
-                "ram": s.ram_percent,
-                "gpu": _avg_gpu_percent(s.gpu_data),
+                "cpu": s.cpu_percent if s.status == "online" else None,
+                "ram": s.ram_percent if s.status == "online" else None,
+                "gpu": _avg_gpu_percent(s.gpu_data) if s.status == "online" else None,
+                "status": s.status,
             })
     else:
         # 超过一周：按天分组求平均值，减少前端渲染压力
         grouped = defaultdict(list)
         for s in stats:
             day_str = s.timestamp.strftime("%Y-%m-%d")
-            grouped[day_str].append((s.cpu_percent or 0, s.ram_percent or 0, _avg_gpu_percent(s.gpu_data)))
+            grouped[day_str]  # 保留全天无有效采集的日期，返回曲线缺口
+            if s.status == "online":
+                grouped[day_str].append((s.cpu_percent or 0, s.ram_percent or 0, _avg_gpu_percent(s.gpu_data)))
 
         for day_str, values in grouped.items():
             data_points.append({
                 "time": day_str + "T00:00:00Z",
-                "cpu": round(sum(v[0] for v in values) / len(values), 1),
-                "ram": round(sum(v[1] for v in values) / len(values), 1),
-                "gpu": round(sum(v[2] for v in values) / len(values), 1),
+                "cpu": round(sum(v[0] for v in values) / len(values), 1) if values else None,
+                "ram": round(sum(v[1] for v in values) / len(values), 1) if values else None,
+                "gpu": round(sum(v[2] for v in values) / len(values), 1) if values else None,
             })
 
     return {"server_id": server_id, "data": data_points}
@@ -337,7 +297,7 @@ def get_email_settings(db: Session = Depends(get_db)):
         "smtp_server": config.smtp_server,
         "smtp_port": config.smtp_port,
         "smtp_user": config.smtp_user,
-        "smtp_password": config.smtp_password,
+        "has_password": bool(config.smtp_password),
         "from_name": config.from_name,
         "from_address": config.from_address,
         "use_tls": config.use_tls,
@@ -354,7 +314,8 @@ def update_email_settings(data: EmailUpdate, db: Session = Depends(get_db)):
     config.smtp_server = data.smtp_server
     config.smtp_port = data.smtp_port
     config.smtp_user = data.smtp_user
-    config.smtp_password = data.smtp_password
+    if data.smtp_password is not None:
+        config.smtp_password = data.smtp_password
     config.from_name = data.from_name
     config.from_address = data.from_address
     config.use_tls = data.use_tls

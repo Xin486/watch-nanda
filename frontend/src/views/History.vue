@@ -22,8 +22,8 @@
             <td>{{ server.ip_address }}</td>
             <td><span class="group-tag">{{ server.group_name }}</span></td>
             <td>
-              <span :class="server.status === 'online' ? 'text-green' : 'text-red'">
-                ● {{ server.status === 'online' ? '在线' : '离线' }}
+              <span :class="['node-status', server.status]">
+                ● {{ statusLabel(server.status) }}
               </span>
             </td>
             <td class="actions">
@@ -53,6 +53,8 @@
         
         <div v-if="isLoading" class="loading-state">数据拉取与计算中...</div>
         
+        <div class="history-message" v-if="historyError">{{ historyError }}</div>
+        <div class="history-message" v-else-if="historyEmpty && !isLoading">此时间范围暂无有效采集数据</div>
         <div ref="chartRef" class="chart-container" v-show="!isLoading"></div>
       </div>
     </div>
@@ -61,8 +63,9 @@
 
 <script setup>
 // 历史负载页：节点列表 + CPU/内存/显存历史折线图
-import { ref, onMounted, nextTick, shallowRef } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, shallowRef } from 'vue'
 import * as echarts from 'echarts'
+import { statusLabel } from '../utils/serverStatus'
 import { api } from '../api'
 import { useServers } from '../composables/useServers'
 
@@ -74,6 +77,10 @@ const currentRange = ref(1)
 
 const chartRef = ref(null)
 const myChart = shallowRef(null)
+let requestId = 0
+let requestController = null
+const historyError = ref('')
+const historyEmpty = ref(false)
 
 // 服务器列表通过 SSE 实时推送
 
@@ -94,10 +101,17 @@ const changeRange = (days) => {
 }
 
 const fetchHistoryData = async (serverId, days) => {
+  const currentRequest = ++requestId
+  requestController?.abort()
+  requestController = new AbortController()
   isLoading.value = true
+  historyError.value = ''
+  historyEmpty.value = false
   try {
-    const res = await api.getHistory(serverId, days)
+    const res = await api.getHistory(serverId, days, { signal: requestController.signal })
+    if (currentRequest !== requestId || !showChartModal.value) return
     const dataPoints = res.data.data
+    historyEmpty.value = !dataPoints.some(p => p.cpu != null || p.ram != null || p.gpu != null)
     
     // 计算图表时间轴的起止（毫秒）
     const endTime = new Date().getTime()
@@ -110,9 +124,16 @@ const fetchHistoryData = async (serverId, days) => {
     
     renderChart(cpus, rams, gpus, startTime, endTime)
   } catch (error) {
-    console.error('拉取历史数据失败', error)
+    if (currentRequest === requestId && error.code !== 'ERR_CANCELED') {
+      historyError.value = '历史数据加载失败，请切换时间范围重试'
+      myChart.value?.clear()
+    }
   } finally {
-    isLoading.value = false
+    if (currentRequest === requestId) {
+      isLoading.value = false
+      await nextTick()
+      myChart.value?.resize()
+    }
   }
 }
 
@@ -129,7 +150,7 @@ const renderChart = (cpus, rams, gpus, startTime, endTime) => {
         params.forEach(p => {
           res += `<div style="display:flex;justify-content:space-between;gap:20px;">
                     <span>${p.marker} ${p.seriesName}</span>
-                    <span style="font-weight:bold">${p.value[1]}</span>
+                    <span style="font-weight:bold">${p.value[1] == null ? '无有效采集' : p.value[1]}</span>
                   </div>`;
         });
         return res;
@@ -172,10 +193,12 @@ const renderChart = (cpus, rams, gpus, startTime, endTime) => {
       { name: '平均显存占用 (%)', type: 'line', showSymbol: false, smooth: true, itemStyle: { color: '#ef4444' }, areaStyle: { color: 'rgba(239, 68, 68, 0.1)' }, data: gpus }
     ]
   }
-  myChart.value.setOption(option)
+  myChart.value?.setOption(option)
 }
 
 const closeChart = () => {
+  requestId++
+  requestController?.abort()
   showChartModal.value = false
   if (myChart.value) {
     myChart.value.dispose()
@@ -183,7 +206,9 @@ const closeChart = () => {
   }
 }
 
-onMounted(() => subscribe())
+const resizeChart = () => myChart.value?.resize()
+onMounted(() => { subscribe(); window.addEventListener('resize', resizeChart) })
+onUnmounted(() => { closeChart(); window.removeEventListener('resize', resizeChart) })
 </script>
 
 <style scoped>
@@ -221,4 +246,9 @@ h2 { margin-top: 0; color: #1e293b; }
 
 .loading-state { height: 400px; display: flex; align-items: center; justify-content: center; color: #64748b; font-weight: bold; }
 .chart-container { width: 100%; height: 400px; }
+.history-message { padding: 12px 16px; border-radius: 6px; background: #f8fafc; color: #64748b; font-size: 13px; }
+.panel { overflow-x: auto; }
+.chart-modal { box-sizing: border-box; max-height: 92vh; overflow-y: auto; }
+.header-left { flex-wrap: wrap; gap: 12px; }
+.time-filters { flex-wrap: wrap; }
 </style>

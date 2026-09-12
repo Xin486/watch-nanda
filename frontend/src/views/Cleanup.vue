@@ -22,8 +22,8 @@
             <td><span class="ip-text">{{ server.ip_address }}</span></td>
             <td><span class="group-tag">{{ server.group_name || '未分组' }}</span></td>
             <td>
-              <span :class="server.status === 'online' ? 'text-green' : 'text-red'">
-                ● {{ server.status === 'online' ? '在线' : '离线' }}
+              <span :class="['node-status', server.status]">
+                ● {{ statusLabel(server.status) }}
               </span>
             </td>
             <td class="actions">
@@ -41,6 +41,7 @@
 <script setup>
 // 数据清理页：历史数据清理与节点删除
 import { onMounted } from 'vue'
+import { statusLabel } from '../utils/serverStatus'
 import { api } from '../api'
 import { useServers } from '../composables/useServers'
 

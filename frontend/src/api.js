@@ -30,7 +30,7 @@ export const api = {
   deleteServer: (id) => http.delete(`/api/server/${id}`),
 
   /** 获取历史负载（days：查询天数，>7 自动降采样） */
-  getHistory: (id, days) => http.get(`/api/server/${id}/history`, { params: { days } }),
+  getHistory: (id, days, options = {}) => http.get(`/api/server/${id}/history`, { ...options, params: { days } }),
 
   /** 清空单台机器的历史数据 */
   clearHistory: (id) => http.delete(`/api/server/${id}/history`),
