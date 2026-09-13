@@ -11,8 +11,7 @@ Node Monitor 后端 API 入口
 import json
 import time
 import urllib.request
-from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import asyncio
@@ -28,6 +27,7 @@ from models.database import SessionLocal, get_db
 from models.models import AlertConfig, EmailConfig, Server, ServerStats
 from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, monitor_once
 from core.status import server_payload
+from core.history import history_payload
 
 # ---------------------------------------------------------------------------
 # 应用初始化
@@ -198,55 +198,12 @@ async def stream_servers():
 # ---------------------------------------------------------------------------
 @app.get("/api/server/{server_id}/history")
 def get_server_history(server_id: int, days: int = 1, db: Session = Depends(get_db)):
-    """获取历史负载数据（≤7 天返回明细，>7 天按天聚合降采样，防止图表卡死）"""
+    """短期快照、长期北京时间日均值；缺失指标不作为零参与平均。"""
     if not 1 <= days <= 365:
         raise HTTPException(status_code=422, detail="days must be between 1 and 365")
-    cutoff_time = datetime.utcnow() - timedelta(days=days)
-    stats = db.query(ServerStats).filter(
-        ServerStats.server_id == server_id,
-        ServerStats.timestamp >= cutoff_time,
-    ).order_by(ServerStats.timestamp.asc()).all()
-
-    data_points = []
-
-    if days <= 7:
-        # 一周以内：返回原始明细数据
-        for s in stats:
-            data_points.append({
-                "time": s.timestamp.isoformat() + "Z",
-                "cpu": s.cpu_percent if s.status == "online" else None,
-                "ram": s.ram_percent if s.status == "online" else None,
-                "gpu": _avg_gpu_percent(s.gpu_data) if s.status == "online" else None,
-                "status": s.status,
-            })
-    else:
-        # 超过一周：按天分组求平均值，减少前端渲染压力
-        grouped = defaultdict(list)
-        for s in stats:
-            day_str = s.timestamp.strftime("%Y-%m-%d")
-            grouped[day_str]  # 保留全天无有效采集的日期，返回曲线缺口
-            if s.status == "online":
-                grouped[day_str].append((s.cpu_percent or 0, s.ram_percent or 0, _avg_gpu_percent(s.gpu_data)))
-
-        for day_str, values in grouped.items():
-            data_points.append({
-                "time": day_str + "T00:00:00Z",
-                "cpu": round(sum(v[0] for v in values) / len(values), 1) if values else None,
-                "ram": round(sum(v[1] for v in values) / len(values), 1) if values else None,
-                "gpu": round(sum(v[2] for v in values) / len(values), 1) if values else None,
-            })
-
-    return {"server_id": server_id, "data": data_points}
-
-
-def _avg_gpu_percent(gpu_data):
-    """计算一组 GPU 的平均显存占用百分比（供历史数据聚合使用）"""
-    if not gpu_data or not isinstance(gpu_data, list) or len(gpu_data) == 0:
-        return 0
-    try:
-        return round(sum(g.get("memory_percent", 0) for g in gpu_data) / len(gpu_data), 1)
-    except Exception:
-        return 0
+    if not db.query(Server.id).filter(Server.id == server_id).first():
+        raise HTTPException(status_code=404, detail="Server not found")
+    return history_payload(db, server_id, days)
 
 
 @app.delete("/api/server/{server_id}/history")

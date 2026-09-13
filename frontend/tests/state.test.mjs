@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import { freshServer } from '../src/utils/serverStatus.js'
+import { prepareHistory, chartOption } from '../src/utils/historyChart.js'
 
 const deferred = () => {
   let resolve, reject
@@ -84,18 +85,21 @@ test('settings cannot save before a successful initial load',async()=>{
 test('history ignores out-of-order responses and cancels on close',async()=>{
   const requests=[],rendered=[]
   const chart={setOption:o=>rendered.push(o),resize:()=>{},dispose:()=>{},clear:()=>{}}
-  const h=setup('views/History.vue',['fetchHistoryData','showChartModal','myChart','closeChart','isLoading'],{
+  const h=setup('views/History.vue',['fetchHistoryData','dialogRef','chartRef','myChart','closeChart','isLoading'],{
+    prepareHistory, chartOption,
     useServers:()=>({servers:{value:[]},subscribe:()=>{}}),
     api:{getHistory:(id,days,options)=>{const d=deferred();requests.push({...d,options});return d.promise}},
   })
-  h.showChartModal.value=true;h.myChart.value=chart
+  h.dialogRef.value={open:true,close(){this.open=false}};h.chartRef.value={clientWidth:900};h.myChart.value=chart
   const old=h.fetchHistoryData(1,1), latest=h.fetchHistoryData(1,7)
   assert.equal(requests[0].options.signal.aborted,true)
-  requests[1].resolve({data:{data:[{time:'2026-09-12T00:00:00Z',cpu:70,ram:20,gpu:30}]}});await latest
-  requests[0].resolve({data:{data:[{time:'2026-09-12T00:00:00Z',cpu:10,ram:20,gpu:30}]}});await old
+  const stamp=new Date(Date.now()-3600000).toISOString()
+  requests[1].resolve({data:{data:[{time:stamp,cpu:70,ram:20,gpu:30}]}});await latest
+  requests[0].resolve({data:{data:[{time:stamp,cpu:10,ram:20,gpu:30}]}});await old
   assert.equal(rendered.length,1);assert.equal(rendered[0].series[0].data[0][1],70)
   const pending=h.fetchHistoryData(1,90);h.closeChart()
   assert.equal(requests[2].options.signal.aborted,true)
+  assert.equal(h.isLoading.value,false)
   requests[2].resolve({data:{data:[]}});await pending;assert.equal(rendered.length,1)
 })
 
