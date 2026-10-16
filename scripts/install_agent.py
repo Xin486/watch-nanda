@@ -308,6 +308,8 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
                 architecture=remote.run('uname -m')
                 candidate=ROOT/'agent'/'dist'/f'node-monitor-agent-linux-{architecture}.tar.gz'
                 if bundle is None and candidate.is_file(): bundle=candidate
+            if getattr(args,'require_bundle',False) and bundle is None:
+                raise InstallError('中心缺少目标架构的独立 Agent 包，请先构建；不会改用系统 Python 安装')
             if bundle:
                 manifest,bundle_hash=bundle_details(bundle)
                 if remote.run('uname -m')!=manifest.get('architecture'):

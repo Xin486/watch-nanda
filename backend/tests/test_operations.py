@@ -26,6 +26,8 @@ class OperationsTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {'SSH_CREDENTIAL_KEY_FILE':str(self.key), 'OPS_PASSWORD_FILE':str(Path(self.temp.name)/'ops.json')})
         self.env.start()
         self.ops_db = patch.object(ops,'SessionLocal',self.Session);self.ops_db.start()
+        self.startup_patches=[patch.object(main,'start_scheduler'),patch.object(main,'stop_scheduler'),patch.object(main,'monitor_once')]
+        for mocked in self.startup_patches:mocked.start()
         ops_auth.set_password('test-operator-password')
         ops_auth.sessions.clear();ops_auth.attempts.clear()
         ops.jobs.clear();ops.active_jobs.clear();ops.terminals.clear()
@@ -33,6 +35,7 @@ class OperationsTests(unittest.TestCase):
     def tearDown(self):
         main.app.dependency_overrides.clear()
         self.ops_db.stop();self.env.stop()
+        for mocked in reversed(self.startup_patches):mocked.stop()
         ops_auth.sessions.clear();ops_auth.attempts.clear()
         ops.jobs.clear();ops.active_jobs.clear();ops.terminals.clear()
         test_monitor.MonitorTests.tearDown(self)
@@ -128,6 +131,16 @@ class OperationsTests(unittest.TestCase):
             main.update_node_notifications(1,main.NodeNotificationUpdate(enabled=True),db)
         with patch.object(tasks,'send_email_wrapper',return_value=(True,'')) as send:
             tasks.check_server_alerts();send.assert_called_once()
+
+    def test_notification_migration_can_upgrade_an_existing_database(self):
+        from sqlalchemy import text, inspect
+        import migrate_agent
+        with self.engine.begin() as db:db.execute(text('ALTER TABLE servers DROP COLUMN email_alert_enabled'))
+        with patch.object(migrate_agent,'engine',self.engine):
+            self.assertFalse(migrate_agent.migrate(check_only=True))
+            migrate_agent.migrate();self.assertTrue(migrate_agent.migrate(check_only=True))
+        with self.Session() as db:
+            node=db.get(Server,1);self.assertEqual(node.hostname,'test');self.assertTrue(node.email_alert_enabled)
 
     def test_terminal_requires_wss_origin_and_operator_session(self):
         from starlette.websockets import WebSocketDisconnect
