@@ -61,3 +61,12 @@ SHOW CREATE TABLE agent_credentials;
 不要删除历史表或回灌旧库来回退这两个增量结构变更。
 
 本文为已核实环境的执行方案；本次检查未运行生产 DDL、没有切换节点或重启服务。
+
+## 生产运行配置
+
+`deploy/production/` 提供此主机的 Nginx 和后端 systemd 配置。
+部署后后端由 `watch-nanda-backend.service` 管理，前端构建结果复制到 `/var/www/watch-nanda`，由 `nginx.service` 在 3000 提供。
+不要再同时运行 `start.sh`，否则会重复启动或端口冲突。运维使用 `systemctl restart watch-nanda-backend nginx`。
+443 仅代理 `/api/agent/report`，不公开管理 API；管理页面仍为 `http://192.168.1.24:3000`，API 保持 7980。
+内部 TLS 的公共 CA 为 `/etc/node-monitor/tls/ca.crt`，节点配置 `ca_file` 指向其可信副本。
+CA 私钥应留在 root 的受限备份目录；节点无需任何 SSH 私钥或 TLS 客户端私钥。

@@ -1,0 +1,19 @@
+[Unit]
+Description=Watch Nanda monitoring API and scheduler
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Legacy SSH nodes still use /root/.ssh; switch account after their migration.
+User=root
+WorkingDirectory=/home/test/Downloads/watch-nanda/monitor_platform/backend
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 7980 --no-server-header
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
