@@ -47,6 +47,7 @@ sudo bash start.sh
 首次安装 systemd 模式默认创建后端和前端预览服务；在当前 192.168.1.24 上会复用仅属于本项目的 Nginx，并更新静态前端目录。
 不会覆盖其他项目的同名服务，也不会接管共享 Nginx。通过 `WATCH_NANDA_SERVICE_USER` 可指定运行账户，默认 root 以兼容现有 SSH 节点；普通账户需要对应的文件、数据库和采集权限。
 初始化不会创建 SSH 免密密钥。节点 Agent 的 HTTPS 入口及内部 CA 接入步骤见 [Agent 接入说明](agent/README.md)。
+监控中心初始化后，运行 `sudo bash install-agent.sh`，输入目标 IP、SSH 用户和密码即可检查并安装节点 Agent；只检查可加 `--check-only`。脚本复用已有节点并保留历史，不创建 SSH 免密密钥。
 `--skip-deps` 可跳过已安装依赖的更新，仍执行数据库校验、迁移和前端构建。
 
 ### 方式二：手动部署

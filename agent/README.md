@@ -6,6 +6,47 @@
 没有监听端口，不使用 SSH 密钥，不接受远程命令或自动更新。节点仅需访问监控中心 HTTPS 443。
 CPU 为采集时 1 秒窗口的利用率；其余指标为当时快照，不是过去 5 分钟的平均值或峰值。
 
+## 交互式检查与自动安装（推荐）
+
+先在监控中心完成 `setup.sh` 初始化及 HTTPS 配置，再从仓库根目录运行：
+
+```bash
+sudo bash install-agent.sh
+```
+
+按提示输入目标 IP、SSH 用户（默认 root）、SSH 端口（默认 22）和密码。密码隐藏输入，不写入参数或配置文件。
+首次连接会显示 SSH 主机指纹，核对后输入 `yes`；已知主机的指纹变化会拒绝连接。这里只保存公开的主机指纹，不创建 SSH 私钥，不修改目标的 authorized_keys 或 crontab。
+非 root 用户需要 sudo 权限，脚本使用同一个密码执行 sudo；不支持必须分配终端或使用不同 sudo 密码的配置。
+
+脚本按 IP 和 SSH 端口匹配已有节点，保留节点 ID、分组及历史；未登记的 IP 自动新增节点。
+SD-WAN/NAT 管理地址与登记地址不一致，或同 IP 对应多个节点时，请明确指定已有节点 ID：
+
+```bash
+sudo bash install-agent.sh --ip 172.16.66.177 --user test --port 22 --server-id 73
+sudo bash install-agent.sh --ip 172.16.66.177 --user test --port 22 --check-only
+```
+
+`--check-only` 仅检查 SSH/sudo、Linux/systemd、Python、节点时钟、TLS 证书及已有 Agent 状态，不安装系统包、不修改节点记录、不签发 Token。
+默认上报到 `https://192.168.1.24/api/agent/report`，自动传输 `/etc/node-monitor/tls/ca.crt` 公钥证书；不会传输中心 CA 或服务器私钥。其他中心可指定：
+
+```bash
+sudo bash install-agent.sh --url https://monitor.example.com/api/agent/report
+sudo bash install-agent.sh --url https://10.0.0.24/api/agent/report --ca-file /path/to/ca.crt
+```
+
+目标需运行 Linux 和 systemd，支持 Python 3.10+。Python/venv 缺失时尝试使用系统 apt/dnf 仓库安装；旧发行版默认 Python 低于 3.10 时停止并提示先升级，不替换系统 Python。
+目标需能访问监控中心 443 以及软件源/PyPI；脚本安装独立 venv 和 NVIDIA NVML Python 包，不安装或更换 GPU 驱动。
+节点时间需与中心相差不超过 55 秒。无 GPU 的机器也可以安装；GPU 读取失败仍按 Agent 原有行为记录错误。
+
+依赖在 `/opt/node-monitor-agent/releases/<版本ID>` 中准备好之后才签发单节点 Token。配置保存为 root:node-monitor 的 640 文件，服务由独立低权限账户运行，每 300 秒上报。
+脚本先以服务账户验证一次真实 HTTPS 上报，再启用 systemd 开机启动；凭据、版本、证书及配置一致且近期已上报的健康 Agent 会跳过重复安装。
+不会操作监控中心服务，不会覆盖不属于本项目的同名服务或自定义 systemd drop-in。
+
+安装失败会尝试恢复原有 Agent 服务和配置，并恢复已有节点原凭据与采集模式；新节点保留 ID 和已有历史，撤销本次 Token 后留在待采集状态。
+如果 SSH 中断导致无法确认恢复结果，脚本保留当前凭据，输出节点上的受保护备份和临时目录，避免把可能已运行的新 Agent 再次断开。
+发生此类中断后先检查节点 `systemctl status node-monitor-agent` 和中心的最近上报；未结束的安装由 `/opt/node-monitor-agent/.install-pending.json` 标识，不自动覆盖。
+此前版本的配置及服务备份位于对应新版本目录的 `.rollback`（仅 root 可读），不删除历史版本。
+
 ## 1. 监控中心迁移
 
 先备份数据库，在维护窗口暂停旧后端，进入 backend 并使用后端的 Python 环境执行：

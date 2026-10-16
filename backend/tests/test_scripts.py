@@ -106,10 +106,11 @@ class InstallerTests(unittest.TestCase):
         if not bash and Path('C:/Program Files/Git/bin/bash.exe').exists():
             bash='C:/Program Files/Git/bin/bash.exe'
         if not bash: self.skipTest('Bash not available')
-        for name in ['start.sh','setup.sh','stop.sh']:
+        for name in ['start.sh','setup.sh','stop.sh','install-agent.sh']:
             self.assertNotIn(b'\r\n',(ROOT/name).read_bytes())
             subprocess.run([bash,'-n',str(ROOT/name)],check=True,capture_output=True)
-            help_result=subprocess.run([bash,str(ROOT/name),'--help'],check=True,capture_output=True)
+            help_result=subprocess.run([bash,str(ROOT/name),'--help'],check=True,capture_output=True,
+                                       env=dict(os.environ,PYTHON_BIN=sys.executable.replace('\\','/')))
             self.assertIn(b'--',help_result.stdout) if name!='stop.sh' else self.assertTrue(help_result.stdout)
 
 
