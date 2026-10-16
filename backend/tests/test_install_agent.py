@@ -188,6 +188,23 @@ class InstallerTests(unittest.TestCase):
         with stack,self.assertRaises(installer.InstallError): installer.main()
         self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check'])
 
+    def test_selinux_label_failure_rolls_back_preparation_before_issuing_token(self):
+        remote,_,_=self.fake()
+        original=remote.run.side_effect
+        def run(command,**kwargs):
+            if 'restorecon -R --' in command:
+                raise installer.InstallError('test SELinux labeling failure')
+            return original(command,**kwargs)
+        remote.run.side_effect=run
+        stack,_,_=self.invoke(remote)
+        with stack,self.assertRaises(installer.InstallError):
+            installer.main()
+        self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check','prepare','rollback'])
+        remote.run.assert_any_call('if command -v restorecon >/dev/null 2>&1; then restorecon -R -- /opt/node-monitor-agent/releases/'+'a'*32+'; fi',root=True)
+        with self.Session() as db:
+            self.assertEqual(db.get(Server,1).collection_mode,'ssh')
+            self.assertIsNone(db.get(AgentCredential,1))
+
     def test_recovery_never_overwrites_credentials_changed_by_another_admin(self):
         with self.Session() as db:
             snapshot,_,digest=installer.provision(db,'127.0.0.1',22,'root','test')

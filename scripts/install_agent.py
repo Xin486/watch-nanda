@@ -351,6 +351,11 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
                 return {'server_id':server.id if server else None,'status':'checked' if args.check_only else 'already_healthy'}
             print('安装节点依赖并准备隔离版本（可能需要数分钟）…', flush=True)
             release = remote.helper(stage, 'prepare')['release']
+            if not re.fullmatch(r'/opt/node-monitor-agent/releases/[0-9a-f]{32}', release):
+                raise InstallError('节点返回了无效的 Agent 版本目录')
+            # copytree preserves the staging directory's SELinux xattrs. Restore
+            # the destination labels before systemd executes the installed files.
+            remote.run('if command -v restorecon >/dev/null 2>&1; then restorecon -R -- '+shlex.quote(release)+'; fi', root=True)
             print('签发单节点 Token，部署服务并验证首次 HTTPS 上报…', flush=True)
             snapshot, token, digest = provision(db, args.ip, args.port, args.user, check['hostname'], args.server_id)
             config = {'url':args.url, 'server_id':snapshot['id'], 'token':token, 'interval_seconds':300, 'jitter_seconds':15}
