@@ -166,6 +166,8 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   .logo-area h2 { font-size: 16px; }
   .menu { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; }
   .menu-group-header { display: none; }
+  .menu-group-header:has(.add-group-btn) { display: flex; align-items: center; padding: 0 5px; }
+  .menu-group-header:has(.add-group-btn)>span:first-child { display: none; }
   .menu-item, .menu-item.sub-item, .menu-item.active { padding: 8px 11px; border: 0; border-radius: 6px; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
   .menu-item .icon { font-size: 13px; margin-right: 6px; }
   .main-content { min-height: 0; }
