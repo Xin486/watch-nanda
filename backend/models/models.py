@@ -19,6 +19,7 @@ class Server(Base):
     collection_mode = Column(String(10), nullable=False, default="ssh", server_default="ssh")
     group_name = Column(String(50), default="未分组")
     is_active = Column(Boolean, default=True)
+    email_alert_enabled = Column(Boolean, nullable=False, default=True, server_default='1')
 
     # ---- 在线状态（替代 Redis 的核心字段）----
     status = Column(String(20), default="offline")          # online / offline

@@ -25,6 +25,15 @@ export const api = {
 
   /** 更新节点基本信息 */
   updateServer: (id, data) => http.post(`/api/server/${id}/update`, data),
+  setNodeNotifications: (id, enabled) => http.post(`/api/server/${id}/notifications`, { enabled }),
+  opsSession: () => http.get('/api/ops/session'),
+  opsLogin: (password) => http.post('/api/ops/login', { password }),
+  opsLogout: () => http.post('/api/ops/logout'),
+  sshTest: (id, data) => http.post(`/api/ops/nodes/${id}/ssh-test`, data, { timeout: 45000 }),
+  trustHost: (id, fingerprint) => http.post(`/api/ops/nodes/${id}/trust-host`, { fingerprint }, { timeout: 30000 }),
+  deployAgent: (id, data) => http.post(`/api/ops/nodes/${id}/deploy`, data, { timeout: 45000 }),
+  deploymentJob: (id) => http.get(`/api/ops/jobs/${id}`),
+  deploymentJobs: (serverId) => http.get('/api/ops/jobs', { params: { server_id: serverId } }),
 
   /** 彻底删除节点及其全部历史数据 */
   deleteServer: (id) => http.delete(`/api/server/${id}`),

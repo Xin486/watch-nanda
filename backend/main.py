@@ -32,11 +32,13 @@ from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, mo
 from core.status import server_payload
 from core.history import history_payload
 from core.ssh_credentials import encrypt_password
+from core.operations import router as operations_router, assert_idle
 
 # ---------------------------------------------------------------------------
 # 应用初始化
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Node Monitor API")
+app.include_router(operations_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -113,6 +115,10 @@ class AlertUpdate(BaseModel):
     alert_recipient: Optional[str] = ""
 
 
+class NodeNotificationUpdate(BaseModel):
+    enabled: bool
+
+
 class EmailUpdate(BaseModel):
     """SMTP 发件配置"""
     smtp_server: Optional[str] = ""
@@ -167,6 +173,7 @@ def add_server(data: ServerCreate, db: Session = Depends(get_db), request: Reque
 @app.post("/api/server/{server_id}/update")
 def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_db), request: Request = None):
     """更新节点基本信息"""
+    assert_idle(server_id)
     server = db.query(Server).filter(Server.id == server_id).with_for_update().first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -188,7 +195,7 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
     server.group_name = data.group_name
     server.ssh_user = data.ssh_user
     server.ssh_port = data.ssh_port
-    if mode != 'ssh' or identity_changed:
+    if identity_changed:
         server.ssh_password_encrypted = None
     if encrypted:
         server.ssh_password_encrypted = encrypted
@@ -204,6 +211,7 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
 @app.delete("/api/server/{server_id}")
 def delete_server_node(server_id: int, db: Session = Depends(get_db)):
     """彻底删除一台服务器节点及其所有历史数据"""
+    assert_idle(server_id)
     server = db.query(Server).filter(Server.id == server_id).with_for_update().first()
     if not server:
         return {"success": False, "message": "找不到该服务器"}
@@ -214,6 +222,18 @@ def delete_server_node(server_id: int, db: Session = Depends(get_db)):
     db.delete(server)
     db.commit()
     return {"success": True, "message": "服务器已彻底删除"}
+
+
+@app.post('/api/server/{server_id}/notifications')
+def update_node_notifications(server_id: int, data: NodeNotificationUpdate, db: Session = Depends(get_db)):
+    server = db.query(Server).filter(Server.id == server_id, Server.is_active == True).with_for_update().first()
+    if server is None:
+        raise HTTPException(404, 'Server not found')
+    server.email_alert_enabled = data.enabled
+    if not data.enabled:
+        server.last_alert_time = None
+    db.commit()
+    return {'success': True, 'email_alert_enabled': server.email_alert_enabled}
 
 
 @app.post('/api/agent/report')

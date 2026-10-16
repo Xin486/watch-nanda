@@ -101,6 +101,8 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn(1, tasks.running_tasks)
 
     def test_failure_and_recovery_share_state_machine(self):
+        with self.Session() as db:
+            db.add(AlertConfig(enable_email_alert=True)); db.commit()
         with patch.object(tasks, 'collect_server_data', return_value=({}, False, 'timeout')):
             tasks._do_monitor_server(1)
         with self.Session() as db:

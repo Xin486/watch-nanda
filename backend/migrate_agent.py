@@ -11,12 +11,14 @@ def migrate(check_only=False):
     missing_column = 'collection_mode' not in columns
     missing_table = not inspector.has_table('agent_credentials')
     missing_password = 'ssh_password_encrypted' not in columns
+    missing_alert = 'email_alert_enabled' not in columns
     print('servers.collection_mode:', 'missing' if missing_column else 'present')
     print('agent_credentials:', 'missing' if missing_table else 'present')
     print('servers.ssh_password_encrypted:', 'missing' if missing_password else 'present')
+    print('servers.email_alert_enabled:', 'missing' if missing_alert else 'present')
     if check_only:
         print('Check only: no schema or data changes made.')
-        return not (missing_column or missing_table or missing_password)
+        return not (missing_column or missing_table or missing_password or missing_alert)
     if missing_column:
         with engine.begin() as connection:
             if engine.dialect.name == 'mysql':
@@ -29,7 +31,12 @@ def migrate(check_only=False):
             if engine.dialect.name == 'mysql':
                 connection.execute(text('SET SESSION lock_wait_timeout = 10'))
             connection.execute(text('ALTER TABLE servers ADD COLUMN ssh_password_encrypted TEXT NULL'))
-    print('Agent schema ready; existing nodes remain in SSH mode.')
+    if missing_alert:
+        with engine.begin() as connection:
+            if engine.dialect.name == 'mysql':
+                connection.execute(text('SET SESSION lock_wait_timeout = 10'))
+            connection.execute(text('ALTER TABLE servers ADD COLUMN email_alert_enabled BOOLEAN NOT NULL DEFAULT 1'))
+    print('Monitoring schema ready; existing collection modes and history preserved.')
 
 
 if __name__ == '__main__':

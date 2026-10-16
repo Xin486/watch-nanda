@@ -271,13 +271,13 @@ def check_server_alerts():
             if effective == 'offline':
                 server.status = 'offline'
                 server.offline_since = server.offline_since or server.last_online
-            elif effective == 'online' and server.last_alert_time:
+            elif effective == 'online' and server.last_alert_time and server.email_alert_enabled:
                 recoveries.append((server.id, server.hostname, server.last_alert_time))
         db.commit()
     if not alerts_enabled:
         return
     for sid, hostname, previous_alert in recoveries:
-        success, _ = send_email_wrapper(None, f'【恢复】服务器 {hostname} 已恢复上报', f'节点 {hostname} 已恢复指标上报。')
+        success, _ = send_node_email(sid, f'【恢复】服务器 {hostname} 已恢复上报', f'节点 {hostname} 已恢复指标上报。')
         if success:
             with SessionLocal() as db:
                 db.query(Server).filter(Server.id == sid, Server.last_alert_time == previous_alert).update({Server.last_alert_time: None})
@@ -288,7 +288,7 @@ def check_server_alerts():
             return
         threshold = config.offline_threshold_minutes or 5
         candidates = []
-        for server in db.query(Server).filter(Server.is_active == True, Server.status == "offline").all():
+        for server in db.query(Server).filter(Server.is_active == True, Server.status == "offline", Server.email_alert_enabled == True).all():
             if freshness(server, now)[0] != "offline" or not server.offline_since:
                 continue
             wait = max(settings.AGENT_OFFLINE_SECONDS, threshold * 60) if server.collection_mode == 'agent' else threshold * 60
@@ -298,15 +298,25 @@ def check_server_alerts():
                 continue
             candidates.append((server.id, server.hostname, server.ip_address, server.offline_since))
     for sid, hostname, address, offline_since in candidates:
-        success, message = send_email_wrapper(None, f"【告警】服务器 {hostname} 已离线",
+        success, message = send_node_email(sid, f"【告警】服务器 {hostname} 已离线",
             f"节点 {hostname} ({address}) 已失联超过 {threshold} 分钟，请检查。")
         if success:
             with SessionLocal() as db:
                 db.query(Server).filter(Server.id == sid, Server.status == "offline",
                     Server.offline_since == offline_since).update({Server.last_alert_time: now})
                 db.commit()
-        else:
+        elif message != 'muted':
             logger.warning("Alert delivery failed for node %s: %s", sid, message)
+
+
+def send_node_email(server_id, subject, content):
+    # Recheck immediately before sending, including when the toggle changed mid-cycle.
+    with SessionLocal() as db:
+        node = db.get(Server, server_id)
+        config = db.query(AlertConfig).first()
+        if not node or not node.is_active or not node.email_alert_enabled or not config or not config.enable_email_alert:
+            return False, 'muted'
+    return send_email_wrapper(None, subject, content)
 
 
 # ---------------------------------------------------------------------------
@@ -450,9 +460,9 @@ def _do_monitor_server(server_id):
             row.latest_status_data = data
             db.commit()
         if recovery:
-            success, message = send_email_wrapper(None, f"【恢复】服务器 {config['hostname']} 已恢复上线",
+            success, message = send_node_email(server_id, f"【恢复】服务器 {config['hostname']} 已恢复上线",
                 f"节点 {config['hostname']} ({config['ip_address']}) 已恢复 SSH 连接。")
-            if not success:
+            if not success and message != 'muted':
                 logger.warning("Recovery delivery failed for node %s: %s", server_id, message)
         if not ok:
             logger.warning("Collection failed for node %s in %.2fs: %s", server_id, time.monotonic() - started, error)

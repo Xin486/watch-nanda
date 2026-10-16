@@ -13,6 +13,8 @@ const routes = [
   { path: '/history', component: () => import('../views/History.vue') },
   { path: '/settings', component: () => import('../views/Settings.vue') },
   { path: '/cleanup', component: () => import('../views/Cleanup.vue') },
+  { path: '/nodes/:id/agent', component: () => import('../views/AgentDeploy.vue') },
+  { path: '/agents', component: () => import('../views/AgentDeploy.vue') },
 ]
 
 const router = createRouter({

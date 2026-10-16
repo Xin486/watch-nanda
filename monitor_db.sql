@@ -58,6 +58,7 @@ create table servers
     collection_mode    varchar(10)  default 'ssh'             not null,
     group_name         varchar(50)  default '未分组'          null,
     is_active          tinyint(1)   default 1                 null,
+    email_alert_enabled tinyint(1)  default 1                 not null,
     status             varchar(20)  default 'offline'         null,
     last_online        datetime                               null,
     offline_since      datetime                               null,

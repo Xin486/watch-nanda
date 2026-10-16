@@ -36,6 +36,7 @@
         <router-link to="/history" class="menu-item" active-class="active">
           <i class="icon">📈</i> 历史负载
         </router-link>
+        <router-link to="/agents" class="menu-item" active-class="active"><i class="icon">⌘</i> Agent 部署</router-link>
         <router-link to="/settings" class="menu-item" active-class="active">
           <i class="icon">⚙️</i> 设置
         </router-link>

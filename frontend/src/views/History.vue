@@ -73,7 +73,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, shallowRef } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import { statusLabel } from '../utils/serverStatus'
 import { METRICS, percentage, beijingTime, prepareHistory, chartOption } from '../utils/historyChart'
@@ -81,6 +82,7 @@ import { api } from '../api'
 import { useServers } from '../composables/useServers'
 
 const { servers, subscribe } = useServers()
+const route = useRoute()
 const ranges = [{days:1,label:'1 天'},{days:7,label:'1 周'},{days:90,label:'1 季度'},{days:180,label:'半年'},{days:365,label:'1 年'}]
 const dialogRef = ref(null)
 const chartRef = ref(null)
@@ -174,6 +176,9 @@ function resizeChart() {
   })
 }
 onMounted(() => { subscribe(); observer = new ResizeObserver(resizeChart); observer.observe(chartRef.value) })
+watch(() => servers.value.find(s => String(s.id) === String(route.query.server_id))?.id, async id => {
+  if (id) { await nextTick(); openChart(servers.value.find(s => s.id === id)) }
+}, { immediate: true })
 onUnmounted(() => { observer?.disconnect(); cancelAnimationFrame(resizeFrame); closeChart() })
 </script>
 

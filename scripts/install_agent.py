@@ -144,6 +144,8 @@ def find_server(db, ip, port, server_id=None):
         server = db.get(Server, server_id)
         if not server:
             raise InstallError('指定的节点 ID 不存在')
+        if (server.ip_address or server.hostname) != ip or (server.ssh_port or 22) != port:
+            raise InstallError('节点连接信息已变化，请刷新页面后重试')
     else:
         matches = db.query(Server).filter(Server.ip_address == ip).all()
         exact = [node for node in matches if node.ssh_port == port]
