@@ -30,6 +30,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from core.status import freshness, collection_time
 from core.config import settings
+from core.ssh_credentials import decrypt_password
 from models.database import SessionLocal
 from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCredential
 
@@ -38,6 +39,8 @@ running_tasks = set()
 tasks_lock = Lock()
 logger = logging.getLogger(__name__)
 scheduler = None
+# A rejected password is tried once per configuration, avoiding account lockout.
+rejected_credentials = {}
 
 # SSH 采集线程池（最多同时并发采集 50 台服务器）
 executor = ThreadPoolExecutor(max_workers=50)
@@ -323,6 +326,10 @@ def collect_server_data(server):
 
     client = None
     try:
+        password = decrypt_password(server)
+        credential_version = getattr(server, 'ssh_password_encrypted', None)
+        if rejected_credentials.get(getattr(server, 'id', None)) == credential_version:
+            raise ValueError('SSH 密码认证失败，请更新密码后重试')
         cmd = (
             "export PATH=$PATH:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin; "
             "echo '<<<UPTIME>>>'; cat /proc/uptime; "
@@ -336,13 +343,15 @@ def collect_server_data(server):
         )
 
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
         target_host = server.ip_address if server.ip_address else server.hostname
 
         client.connect(
             hostname=target_host,
             port=server.ssh_port,
             username=server.ssh_user or "root",
+            password=password, look_for_keys=False, allow_agent=False,
             timeout=15, banner_timeout=15, auth_timeout=15,
         )
 
@@ -391,15 +400,24 @@ def collect_server_data(server):
         return data, True, ""
 
     except Exception as e:
-        data["error_message"] = str(e)
-        return data, False, str(e)
+        if isinstance(e, paramiko.AuthenticationException):
+            rejected_credentials[getattr(server, 'id', None)] = getattr(server, 'ssh_password_encrypted', None)
+            error = 'SSH 密码认证失败，请更新密码后重试'
+        elif isinstance(e, paramiko.BadHostKeyException):
+            error = 'SSH 主机指纹不匹配，请由管理员核验'
+        elif isinstance(e, ValueError):
+            error = 'SSH 密码未配置、已被拒绝或加密配置不可用，请检查凭据'
+        else:
+            error = 'SSH 采集失败：' + type(e).__name__
+        data["error_message"] = error
+        return data, False, error
     finally:
         data["timestamp"] = datetime.utcnow().isoformat() + "Z"
         if client:
             client.close()
 
 
-CONFIG_FIELDS = ("hostname", "ip_address", "ssh_port", "ssh_user", "group_name", "collection_mode")
+CONFIG_FIELDS = ("hostname", "ip_address", "ssh_port", "ssh_user", "group_name", "collection_mode", "ssh_password_encrypted")
 
 
 def _do_monitor_server(server_id):
@@ -411,7 +429,7 @@ def _do_monitor_server(server_id):
             if row is None:
                 return
             config = {key: getattr(row, key) for key in CONFIG_FIELDS}
-        data, ok, error = collect_server_data(SimpleNamespace(**config))
+        data, ok, error = collect_server_data(SimpleNamespace(id=server_id, **config))
         data["timestamp"] = datetime.utcnow().isoformat() + "Z"
         data["collection_duration_seconds"] = round(time.monotonic() - started, 3)
         recovery = False

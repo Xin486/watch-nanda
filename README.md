@@ -83,14 +83,19 @@ backend/.venv/bin/python scripts/initialize.py
 (cd frontend && npm run build)
 ```
 
-### 配置 SSH 免密（后端 → 被监控服务器）
+### 配置 SSH 用户名密码（后端 → 被监控服务器）
 
-仅使用 SSH 采集模式的节点要求后端能以配置的账号（默认 root）免密登录，
-否则节点将一直显示离线：
+SSH 采集只使用密码认证，禁用本地私钥和 ssh-agent。首次接入必须由管理员核验目标主机指纹并加入运行后端账户的 `~/.ssh/known_hosts`，未知或变化的指纹会拒绝连接。
 
 ```bash
-ssh-copy-id root@<被监控服务器IP>
+cd backend
+sudo python3 manage_ssh.py --init-key
+sudo python3 manage_ssh.py --server-id <节点ID> --user test
 ```
+
+命令交互输入密码，验证连接成功后加密保存，不接受命令行密码。已有密钥文件不会被覆盖。也可以使用 HTTPS 页面编辑 SSH 密码；HTTP 页面禁止提交密码，留空保留已存密码，修改地址、端口、用户或切换 Agent 会清除旧密码。错误密码仅尝试一次，更新配置后才重新尝试。
+
+生产内网页面使用 `https://192.168.1.24`（需信任内部 CA）。该 HTTPS 管理界面仅允许 `192.168.1.0/24`，公网入口仍只开放 Agent 上报路径。密码使用 SSH/TLS 加密传输、Fernet 加密保存；加密密钥默认 `/etc/node-monitor/ssh-credentials.key`，权限 600，可通过 `SSH_CREDENTIAL_KEY_FILE` 指定其他安全路径。请独立备份该密钥，丢失后需重新输入所有 SSH 密码。升级时执行 `python3 backend/migrate_agent.py` 增加可空密码字段，历史数据不变。
 
 ### 启动 / 停止
 

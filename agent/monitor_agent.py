@@ -4,6 +4,10 @@ import argparse
 import json
 import logging
 import os
+try:
+    import pwd
+except ImportError:  # Allows configuration/contract tests on non-Linux build controllers.
+    pwd = None
 from pathlib import Path
 import random
 import ssl
@@ -17,6 +21,51 @@ from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHand
 from uuid import uuid4
 
 log = logging.getLogger('node-monitor-agent')
+
+
+def process_snapshot(proc=Path('/proc')):
+    """Read counters without command arguments, elevated permissions or subprocesses."""
+    result = {}
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / 'stat').read_text()
+            # comm may contain spaces and parentheses; fields after the last ')' start at state.
+            left, right = raw.index('('), raw.rindex(')')
+            fields = raw[right + 2:].split()
+            name = ''.join(c if c.isprintable() else '?' for c in raw[left+1:right])[:150]
+            result[int(entry.name)] = (int(fields[19]), int(fields[11]) + int(fields[12]),
+                                      max(0, int(fields[21])), entry.stat().st_uid, name)
+        except (OSError, ValueError, IndexError):
+            continue  # Processes may exit, and hidepid may restrict visibility.
+        if len(result) >= 32768:
+            break
+    return result
+
+
+def top_process(before, after, elapsed, total_kb):
+    if not before or not after:
+        return None
+    hz = os.sysconf('SC_CLK_TCK')
+    page_kb = os.sysconf('SC_PAGE_SIZE') / 1024
+    candidates = []
+    for pid, (started, ticks, rss, uid, name) in after.items():
+        old = before.get(pid)
+        if old is None or old[0] != started:
+            continue  # Exclude PID reuse and processes without a complete sample.
+        cpu = max(0, 100 * (ticks - old[1]) / hz / max(elapsed, 0.001))
+        memory = min(100, 100 * rss * page_kb / max(total_kb, 1))
+        candidates.append((cpu, memory, pid, uid, name))
+    if not candidates:
+        return None
+    cpu, memory, pid, uid, name = max(candidates)
+    try:
+        user = pwd.getpwuid(uid).pw_name[:100]
+    except (KeyError, AttributeError):
+        user = str(uid)
+    return {'pid': pid, 'user': user, 'name': name, 'cpu_percent': round(cpu, 2),
+            'memory_percent': round(memory, 2)}
 
 
 def cpu_counters():
@@ -67,9 +116,19 @@ def gpu_metrics():
 
 
 def collect(server_id):
+    try:
+        processes_before = process_snapshot()
+    except OSError:
+        processes_before = {}
     before, idle_before = cpu_counters()
+    started = time.monotonic()
     time.sleep(1)
     after, idle_after = cpu_counters()
+    elapsed = time.monotonic() - started
+    try:
+        processes_after = process_snapshot()
+    except OSError:
+        processes_after = {}
     total = after - before
     if total <= 0:
         raise ValueError('CPU counters did not advance')
@@ -88,6 +147,7 @@ def collect(server_id):
         'ram_total_mb': mem['MemTotal'] // 1024, 'ram_used_mb': used // 1024,
         'ram_percent': round(used / mem['MemTotal'] * 100, 2),
         'gpu_data': gpus, 'gpu_error': error,
+        'top_process_detail': top_process(processes_before, processes_after, elapsed, mem['MemTotal']),
     }
 
 

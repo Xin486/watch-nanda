@@ -181,6 +181,11 @@ def initialize():
             apply_schema(connection, (ROOT / 'monitor_db.sql').read_text(encoding='utf-8-sig'))
         from migrate_agent import migrate
         migrate()
+        from manage_ssh import initialize_key
+        try:
+            initialize_key()
+        except PermissionError:
+            print('SSH 密码存储需管理员运行 backend/manage_ssh.py --init-key，或设置可写的 SSH_CREDENTIAL_KEY_FILE。')
         from models.models import Server, ServerStats, EmailConfig, AlertConfig, AgentCredential
         inspector = inspect(engine)
         for model in (Server, ServerStats, EmailConfig, AlertConfig, AgentCredential):

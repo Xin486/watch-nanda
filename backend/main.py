@@ -20,7 +20,9 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, SecretStr
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from models.database import SessionLocal, get_db
@@ -29,11 +31,33 @@ from core.agent import Report, accept_report
 from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, monitor_once
 from core.status import server_payload
 from core.history import history_payload
+from core.ssh_credentials import encrypt_password
 
 # ---------------------------------------------------------------------------
 # 应用初始化
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Node Monitor API")
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_validation_error(request, exc):
+    # Pydantic errors can embed the submitted input, including passwords.
+    return JSONResponse(status_code=422, content={'detail': [
+        {'loc': list(error['loc']), 'msg': error['msg'], 'type': error['type']}
+        for error in exc.errors()]})
+
+
+def password_ciphertext(secret, server, request):
+    if secret is None or not secret.get_secret_value():
+        return None
+    if request is None or request.scope.get('scheme') != 'https':
+        raise HTTPException(400, 'SSH 密码只能通过 HTTPS 提交，或使用服务器本地 manage_ssh.py')
+    try:
+        return encrypt_password(secret.get_secret_value(), server)
+    except ValueError:
+        raise HTTPException(422, 'SSH 密码或加密密钥配置无效') from None
+    except OSError:
+        raise HTTPException(503, '请先在服务器初始化 SSH 凭据加密密钥') from None
 
 # 允许前端 (Vite 3000 端口) 跨域访问
 app.add_middleware(
@@ -68,6 +92,7 @@ class ServerCreate(BaseModel):
     ssh_user: str = 'root'
     ssh_port: int = 22
     collection_mode: Literal['ssh', 'agent'] = 'agent'
+    ssh_password: Optional[SecretStr] = None
 
 
 class ServerUpdate(BaseModel):
@@ -78,6 +103,7 @@ class ServerUpdate(BaseModel):
     ssh_user: str = 'root'
     ssh_port: int = 22
     collection_mode: Optional[Literal['ssh', 'agent']] = None
+    ssh_password: Optional[SecretStr] = None
 
 
 class AlertUpdate(BaseModel):
@@ -117,7 +143,7 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
 
 
 @app.post("/api/servers/add")
-def add_server(data: ServerCreate, db: Session = Depends(get_db)):
+def add_server(data: ServerCreate, db: Session = Depends(get_db), request: Request = None):
     """新增一台服务器（默认离线，等待后台调度器首次采集）"""
     new_server = Server(
         hostname=data.hostname,
@@ -129,22 +155,30 @@ def add_server(data: ServerCreate, db: Session = Depends(get_db)):
         is_active=True,
         status="offline",
     )
+    if data.collection_mode == 'ssh':
+        new_server.ssh_password_encrypted = password_ciphertext(data.ssh_password, new_server, request)
+        if not new_server.ssh_password_encrypted:
+            raise HTTPException(422, 'SSH 采集需要输入用户名密码')
     db.add(new_server)
     db.commit()
     return {"success": True, "message": "服务器添加成功", "server_id": new_server.id}
 
 
 @app.post("/api/server/{server_id}/update")
-def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_db)):
+def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_db), request: Request = None):
     """更新节点基本信息"""
     server = db.query(Server).filter(Server.id == server_id).with_for_update().first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
     mode = data.collection_mode or server.collection_mode
+    identity_changed = any(getattr(server, key) != getattr(data, key)
+                           for key in ('ip_address', 'ssh_user', 'ssh_port'))
+    target = Server(hostname=data.hostname, ip_address=data.ip_address, ssh_user=data.ssh_user, ssh_port=data.ssh_port)
+    encrypted = password_ciphertext(data.ssh_password, target, request) if mode == 'ssh' else None
     connection_changed = mode != server.collection_mode or any(getattr(server, key) != getattr(data, key)
                              for key in ("hostname", "ip_address", "ssh_user", "ssh_port"))
-    if connection_changed:
+    if connection_changed or encrypted:
         server.latest_status_data = None
         server.status = "pending"
         server.offline_since = None
@@ -154,6 +188,10 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
     server.group_name = data.group_name
     server.ssh_user = data.ssh_user
     server.ssh_port = data.ssh_port
+    if mode != 'ssh' or identity_changed:
+        server.ssh_password_encrypted = None
+    if encrypted:
+        server.ssh_password_encrypted = encrypted
     if mode != server.collection_mode:
         credential = db.get(AgentCredential, server_id)
         if credential:

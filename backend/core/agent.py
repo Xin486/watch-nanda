@@ -27,6 +27,14 @@ class GPU(MetricModel):
     power_limit: float | None = Field(default=None, ge=0, le=10000)
 
 
+class Process(MetricModel):
+    pid: int = Field(gt=0, le=2**31-1)
+    user: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=150)
+    cpu_percent: float = Field(ge=0, le=10**7)
+    memory_percent: float = Field(ge=0, le=100)
+
+
 class Report(MetricModel):
     server_id: int = Field(gt=0)
     report_id: UUID
@@ -39,6 +47,7 @@ class Report(MetricModel):
     ram_percent: float = Field(ge=0, le=100)
     gpu_data: list[GPU] = Field(default_factory=list, max_length=64)
     gpu_error: str | None = Field(default=None, max_length=200)
+    top_process_detail: Process | None = None
 
     @field_validator('sampled_at')
     @classmethod
@@ -75,7 +84,10 @@ def accept_report(db, report, token, now=None):
     if report.ram_used_mb > report.ram_total_mb:
         raise HTTPException(422, 'Used RAM exceeds total RAM')
     data = report.model_dump(mode='json', exclude={'server_id', 'sampled_at'})
-    data.update(timestamp=report.sampled_at.isoformat()+'Z', received_at=now.isoformat()+'Z', top_process='未采集')
+    process = report.top_process_detail
+    label = (f'{process.user} 运行 {process.name} (PID:{process.pid} CPU:{process.cpu_percent:g}% 内存:{process.memory_percent:g}%)'
+             if process else '未采集（请更新 Agent 或检查进程访问权限）')
+    data.update(timestamp=report.sampled_at.isoformat()+'Z', received_at=now.isoformat()+'Z', top_process=label)
     server.latest_status_data = data
     server.status = 'online'
     server.last_online = now

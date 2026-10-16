@@ -130,6 +130,7 @@
               <div class="form-item" v-if="editForm.collection_mode === 'agent'"><label>节点 ID：{{ editForm.id }}</label><span>切换后请在监控服务器签发节点 Token；原 Token 在切换模式后失效。</span></div>
               <div class="form-item" v-if="editForm.collection_mode === 'ssh'"><label>SSH 用户名</label><input type="text" v-model="editForm.ssh_user"></div>
               <div class="form-item" v-if="editForm.collection_mode === 'ssh'"><label>SSH 端口</label><input type="number" v-model="editForm.ssh_port"></div>
+              <div class="form-item" v-if="editForm.collection_mode === 'ssh'"><label>SSH 密码</label><input type="password" v-model="editForm.ssh_password" autocomplete="new-password" :placeholder="selectedServer.has_ssh_password ? '已配置，留空保留' : '输入 SSH 密码'"><span>HTTPS 提交、加密保存；修改连接地址或用户名时需重新输入。</span></div>
             </div>
             <div class="modal-actions">
               <button class="btn-cancel" @click="showEditModal = false">取消</button>
@@ -207,7 +208,7 @@ const openEditModal = (server) => {
     ssh_user: server.ssh_user || 'root', 
     ssh_port: server.ssh_port || 22, 
     collection_mode: server.collection_mode || 'ssh',
-
+    ssh_password: '',
   }
   showEditModal.value = true
 }
@@ -215,9 +216,16 @@ const openEditModal = (server) => {
 // 提交节点配置修改到后端
 const saveServerInfo = async () => {
   if (saving.value) return
+  if (editForm.value.ssh_password && window.location.protocol !== 'https:') {
+    alert('请先使用 HTTPS 地址打开监控平台，再提交 SSH 密码。')
+    return
+  }
   saving.value = true
   try {
-    await api.updateServer(editForm.value.id, editForm.value)
+    const { ssh_password, ...payload } = editForm.value
+    if (payload.collection_mode === 'ssh' && ssh_password) payload.ssh_password = ssh_password
+    await api.updateServer(editForm.value.id, payload)
+    editForm.value.ssh_password = ''
     showEditModal.value = false
     window.dispatchEvent(new CustomEvent('servers-refresh')) 
   } catch (error) { 

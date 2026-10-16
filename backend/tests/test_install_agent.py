@@ -132,14 +132,14 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(db.get(Server,1).latest_status_data['cpu_percent'],42)
             self.assertIsNone(db.get(AgentCredential,1))
 
-    def test_batch_can_reuse_existing_keys_but_rejects_unknown_hosts(self):
+    def test_batch_ignores_legacy_key_option_and_rejects_unknown_hosts(self):
         import paramiko
         remote,_,_=self.fake()
         stack,_,client=self.invoke(remote)
         with stack:
             result=installer.install(installer.parse_args(),'test-only-ssh-secret',use_existing_keys=True,known_hosts_only=True)
         self.assertEqual(result['status'],'installed')
-        self.assertTrue(client.connect.call_args.kwargs['look_for_keys'])
+        self.assertFalse(client.connect.call_args.kwargs['look_for_keys'])
         self.assertFalse(client.connect.call_args.kwargs['allow_agent'])
         self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0],paramiko.RejectPolicy)
 

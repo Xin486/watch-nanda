@@ -1,5 +1,5 @@
 """ORM 模型定义（对应 monitor_db.sql 中的 4 张表）"""
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -15,6 +15,7 @@ class Server(Base):
     ip_address = Column(String(50), nullable=True)
     ssh_port = Column(Integer, default=22)
     ssh_user = Column(String(50), default="root")
+    ssh_password_encrypted = Column(Text, nullable=True)
     collection_mode = Column(String(10), nullable=False, default="ssh", server_default="ssh")
     group_name = Column(String(50), default="未分组")
     is_active = Column(Boolean, default=True)

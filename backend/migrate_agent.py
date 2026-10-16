@@ -10,11 +10,13 @@ def migrate(check_only=False):
     columns = {c['name'] for c in inspector.get_columns('servers')}
     missing_column = 'collection_mode' not in columns
     missing_table = not inspector.has_table('agent_credentials')
+    missing_password = 'ssh_password_encrypted' not in columns
     print('servers.collection_mode:', 'missing' if missing_column else 'present')
     print('agent_credentials:', 'missing' if missing_table else 'present')
+    print('servers.ssh_password_encrypted:', 'missing' if missing_password else 'present')
     if check_only:
         print('Check only: no schema or data changes made.')
-        return not (missing_column or missing_table)
+        return not (missing_column or missing_table or missing_password)
     if missing_column:
         with engine.begin() as connection:
             if engine.dialect.name == 'mysql':
@@ -22,6 +24,11 @@ def migrate(check_only=False):
                 connection.execute(text('SET SESSION lock_wait_timeout = 10'))
             connection.execute(text("ALTER TABLE servers ADD COLUMN collection_mode VARCHAR(10) NOT NULL DEFAULT 'ssh'"))
     AgentCredential.__table__.create(engine, checkfirst=True)
+    if missing_password:
+        with engine.begin() as connection:
+            if engine.dialect.name == 'mysql':
+                connection.execute(text('SET SESSION lock_wait_timeout = 10'))
+            connection.execute(text('ALTER TABLE servers ADD COLUMN ssh_password_encrypted TEXT NULL'))
     print('Agent schema ready; existing nodes remain in SSH mode.')
 
 

@@ -298,7 +298,7 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
             db.rollback()  # Never hold a database transaction during SSH/pip operations.
             print('连接目标并检查 sudo、Linux、systemd 和 Python…', flush=True)
             client.connect(args.ip, port=args.port, username=args.user, password=password,
-                           look_for_keys=use_existing_keys, allow_agent=False, timeout=10, auth_timeout=15, banner_timeout=15)
+                           look_for_keys=False, allow_agent=False, timeout=10, auth_timeout=15, banner_timeout=15)
             remote.root = remote.run('id -u') == '0'
             remote.run('test "$(uname -s)" = Linux && test -d /run/systemd/system && command -v systemctl >/dev/null', root=True)
             bundle=getattr(args,'bundle',None)

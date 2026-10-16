@@ -54,6 +54,7 @@ create table servers
     ip_address         varchar(50)                            null,
     ssh_port           int          default 22                null,
     ssh_user           varchar(50)  default 'root'            null,
+    ssh_password_encrypted text                              null,
     collection_mode    varchar(10)  default 'ssh'             not null,
     group_name         varchar(50)  default '未分组'          null,
     is_active          tinyint(1)   default 1                 null,

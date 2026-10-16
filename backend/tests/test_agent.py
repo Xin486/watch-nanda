@@ -50,6 +50,16 @@ class AgentTests(unittest.TestCase):
             db.delete(db.get(AgentCredential,1)); db.commit()
             with self.assertRaises(HTTPException): accept_report(db,self.report(),'a'*43,self.now)
 
+    def test_agent_process_detail_reaches_existing_dashboard_field(self):
+        self.node()
+        process={'pid':123,'user':'test','name':'python','cpu_percent':250,'memory_percent':12.5}
+        with self.Session() as db:
+            accept_report(db,self.report(top_process_detail=process),'a'*43,self.now)
+            data=db.get(Server,1).latest_status_data
+            self.assertEqual(data['top_process_detail'],process)
+            self.assertIn('python',data['top_process'])
+            self.assertIn('CPU:250%',data['top_process'])
+
     def test_retry_and_old_report_do_not_keep_node_online(self):
         self.node()
         report = self.report()
@@ -213,9 +223,19 @@ spec.loader.exec_module(agent)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_process_sample_accounts_for_pid_reuse_and_cpu_time(self):
+        before={10:(123,100,200,1000,'python'),11:(5,100,200,1000,'reused')}
+        after={10:(123,250,200,1000,'python'),11:(6,100000,200,1000,'reused')}
+        with patch.object(agent.os,'sysconf',create=True,side_effect=[100,4096]):
+            result=agent.top_process(before,after,1.5,8000)
+        self.assertEqual(result['pid'],10)
+        self.assertEqual(result['cpu_percent'],100)
+        self.assertEqual(result['memory_percent'],10)
+        self.assertNotIn('command',result)
+
     def test_cpu_uses_two_samples_and_no_subprocess(self):
         files={'/proc/meminfo':'MemTotal: 2048 kB\nMemAvailable: 1024 kB\n','/proc/uptime':'100.5 100.0'}
-        with patch.object(agent,'cpu_counters',side_effect=[(100,50),(200,70)]), patch.object(agent.time,'sleep'), patch.object(agent.Path,'read_text',lambda path: files[path.as_posix()]), patch.object(agent,'gpu_metrics',return_value=([],None)):
+        with patch.object(agent,'process_snapshot',return_value={}), patch.object(agent,'cpu_counters',side_effect=[(100,50),(200,70)]), patch.object(agent.time,'sleep'), patch.object(agent.Path,'read_text',lambda path: files[path.as_posix()]), patch.object(agent,'gpu_metrics',return_value=([],None)):
             result=agent.collect(1)
         self.assertEqual(result['cpu_percent'],80)
         self.assertEqual(result['ram_percent'],50)

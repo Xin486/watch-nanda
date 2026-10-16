@@ -27,10 +27,11 @@
           <div class="add-node-grid add-node-ssh-grid">
             <div class="add-node-field"><label for="add-ssh-user">用户名</label><input id="add-ssh-user" v-model="form.ssh_user" required maxlength="50" spellcheck="false" autocomplete="off" :disabled="saving"></div>
             <div class="add-node-field"><label for="add-ssh-port">端口</label><input id="add-ssh-port" v-model.number="form.ssh_port" type="number" min="1" max="65535" step="1" required :disabled="saving"></div>
+            <div class="add-node-field add-node-full"><label for="add-ssh-password">SSH 密码</label><input id="add-ssh-password" v-model="form.ssh_password" type="password" autocomplete="new-password" required :disabled="saving"><small>通过 HTTPS 提交，加密保存；不使用免密私钥。</small></div>
           </div>
         </section>
 
-        <div class="add-node-tip"><div><strong>接入准备</strong><p v-if="form.collection_mode === 'agent'">添加后，在监控服务器签发此节点专属 Token，并在节点安装采集服务。无需配置 SSH 免密登录。</p><p v-else>请先配置监控平台到目标服务器的免密 SSH 登录。添加后，平台将在一分钟内尝试采集。</p></div></div>
+        <div class="add-node-tip"><div><strong>接入准备</strong><p v-if="form.collection_mode === 'agent'">添加后，在监控服务器签发此节点专属 Token，并在节点安装采集服务。无需配置 SSH 免密登录。</p><p v-else>请输入目标服务器的用户名和密码，并由管理员核验 SSH 主机指纹。请使用 HTTPS 页面添加密码。</p></div></div>
         <p v-if="errorMessage" class="add-node-error" role="alert">{{ errorMessage }}</p>
       </div>
 
@@ -48,7 +49,7 @@ const emit = defineEmits(['close', 'created'])
 const dialog = ref(null)
 const saving = ref(false)
 const errorMessage = ref('')
-const form = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22, collection_mode: 'agent' })
+const form = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22, collection_mode: 'agent', ssh_password: '' })
 
 const closeModal = () => { if (!saving.value) emit('close') }
 const trapFocus = event => {
@@ -68,11 +69,16 @@ const onBackdropClick = event => {
 }
 const submit = async () => {
   if (saving.value) return
+  if (form.value.collection_mode === 'ssh' && window.location.protocol !== 'https:') {
+    errorMessage.value = '请输入 HTTPS 地址后再配置 SSH 密码。'
+    return
+  }
   const payload = {
     hostname: form.value.hostname.trim(), ip_address: form.value.ip_address.trim(),
     group_name: form.value.group_name.trim() || '未分组',
     ssh_user: form.value.ssh_user.trim(), ssh_port: Number(form.value.ssh_port),
     collection_mode: form.value.collection_mode,
+    ...(form.value.collection_mode === 'ssh' ? { ssh_password: form.value.ssh_password } : {}),
   }
   if (!payload.hostname || !payload.ip_address || (payload.collection_mode === 'ssh' && !payload.ssh_user)) {
     errorMessage.value = '请填写主机名、IP 地址和 SSH 用户名。'
@@ -87,6 +93,7 @@ const submit = async () => {
   try {
     const { data } = await api.addServer(payload)
     if (!data.success) throw new Error('创建未成功')
+    form.value.ssh_password = ''
     emit('created', { server_id: data.server_id, collection_mode: payload.collection_mode })
   } catch {
     errorMessage.value = '添加失败，请检查网络或连接信息后重试。已保留当前输入。'

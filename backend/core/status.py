@@ -38,6 +38,7 @@ def server_payload(server, now=None):
         **data, "id": server.id, "hostname": server.hostname,
         "ip_address": server.ip_address, "group_name": server.group_name,
         "ssh_user": server.ssh_user, "ssh_port": server.ssh_port,
+        "has_ssh_password": bool(getattr(server, 'ssh_password_encrypted', None)),
         "status": status, "collection_status": server.status,
         "collection_mode": getattr(server, 'collection_mode', 'ssh'),
         "data_age_seconds": age,
