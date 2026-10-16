@@ -153,12 +153,15 @@ class OperationsTests(unittest.TestCase):
                 with client.websocket_connect('wss://testserver/api/ops/nodes/1/terminal',headers={'origin':'https://evil.example','cookie':cookie}):pass
 
     def test_terminal_disconnect_closes_remote_channel_and_client(self):
+        from threading import Event
         with self.client() as client,patch.object(ops,'connect_ssh') as connect:
             response=self.login(client);cookie=response.headers['set-cookie'].split(';')[0]
             remote=connect.return_value;channel=remote.invoke_shell.return_value
+            closed=Event();remote.close.side_effect=closed.set
             channel.recv_ready.return_value=False;channel.closed=False;channel.exit_status_ready.return_value=False
             with client.websocket_connect('wss://testserver/api/ops/nodes/1/terminal',headers={'origin':'https://testserver','cookie':cookie}) as ws:
                 ws.send_json({'use_saved':False,'username':'root','password':'node-secret'})
                 self.assertEqual(ws.receive_json()['type'],'connected')
+            self.assertTrue(closed.wait(2),'Remote client was not closed after WebSocket disconnect')
             remote.close.assert_called();channel.close.assert_called()
             self.assertFalse(ops.terminals)
