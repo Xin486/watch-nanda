@@ -123,7 +123,7 @@ watch(() => route.path, () => {
 /* 包含之前的全局与侧边栏样式 */
 html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
 .app-layout { display: flex; height: 100vh; overflow: hidden; }
-.sidebar { width: 240px; background: #0f172a; color: #cbd5e1; display: flex; flex-direction: column; }
+.sidebar { width: 240px; flex-shrink: 0; background: #0f172a; color: #cbd5e1; display: flex; flex-direction: column; }
 .logo-area { padding: 20px; text-align: center; border-bottom: 1px solid #1e293b; }
 .logo-area h2 { margin: 0; color: #fff; font-size: 20px; font-weight: 600; letter-spacing: 1px; }
 .menu { flex: 1; overflow-y: auto; padding: 20px 0; }
@@ -135,7 +135,7 @@ html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9; font-fami
 .menu-item.active { background: #3b82f6; color: #fff; border-left: 4px solid #93c5fd; padding-left: 16px;}
 .icon { margin-right: 12px; font-style: normal; font-size: 18px; }
 .sub-item { padding-left: 30px; font-size: 14px; }
-.main-content { flex: 1; overflow-y: auto; background: #f8fafc; }
+.main-content { flex: 1; min-width: 0; overflow-y: auto; background: #f8fafc; }
 
 /* 弹窗样式 */
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
@@ -159,6 +159,17 @@ html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9; font-fami
 button:disabled { opacity: .6; cursor: not-allowed; }
 @media (max-width: 1100px) { .sidebar { width: 190px; flex-shrink: 0; } }
 @media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 16px 10px; } .menu-item { padding: 12px 10px; } }
+@media (max-width: 600px) {
+  .app-layout { flex-direction: column; height: 100dvh; }
+  .sidebar { width: 100%; }
+  .logo-area { padding: 12px 16px; text-align: left; }
+  .logo-area h2 { font-size: 16px; }
+  .menu { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; }
+  .menu-group-header { display: none; }
+  .menu-item, .menu-item.sub-item, .menu-item.active { padding: 8px 11px; border: 0; border-radius: 6px; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+  .menu-item .icon { font-size: 13px; margin-right: 6px; }
+  .main-content { min-height: 0; }
+}
 .add-node-success { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 14px 20px; box-sizing: border-box; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; color: #166534; font-size: 13px; box-shadow: 0 8px 28px #0f172a1a; }
 .add-node-success span { display: grid; place-items: center; flex-shrink: 0; width: 21px; height: 21px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 13px; }
 </style>
