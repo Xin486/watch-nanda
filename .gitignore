@@ -25,6 +25,8 @@ agent/config.json
 
 # 本地隔离验证依赖
 .tmp-backend-test-deps/
+.venv/
+.runtime/
 
 # 编辑器及系统文件
 .vscode/

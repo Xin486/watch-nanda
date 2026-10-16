@@ -3,7 +3,7 @@
 支持节点主动通过 HTTPS 上报，无需 SSH 免密密钥。新节点默认每 5 分钟上报、每 10 分钟保存历史；已有节点继续 SSH 采集，可逐台迁移。
 已有数据库升级前必须执行 `backend/migrate_agent.py`。详细接入、Token 签发和回退步骤见 [Agent 接入说明](agent/README.md)。
 
-通过 SSH 免密登录采集集群中每台服务器的 CPU / 内存 / GPU 数据，
+通过节点 HTTPS 主动上报或已有 SSH 采集获取 CPU / 内存 / GPU 数据，
 提供控制台卡片、算力大屏、历史曲线与离线邮件告警。
 
 ## 技术栈
@@ -18,34 +18,54 @@
 
 ### 方式一：一键初始化（推荐）
 
-要求机器已安装 Docker、Python 3.10~3.12、Node.js 18+，然后：
+要求机器已安装 Python 3.10~3.12（含 venv）、Node.js 18+ 和 npm；自动创建本地数据库时还需要 Docker，然后：
 
 ```bash
-bash setup.sh    # 自动：生成 .env → Docker 拉起 MySQL → 建库导表 → 安装前后端依赖
-bash start.sh    # 启动平台
+bash setup.sh    # 创建独立 venv、安装依赖、准备数据库、迁移并构建前端
+bash start.sh    # 后台启动；重复执行不会新增实例
 ```
 
-`setup.sh` 是幂等的，可重复执行；若 `.env` 中 `DB_HOST` 指向远程数据库，
-脚本会跳过 Docker 创建，直接用本机 `mysql` 客户端建库导表。
+`setup.sh` 可重复执行，保留已有 `.env` 和数据；只有新建 `.env` 时才生成随机数据库密码，且不打印密码。
+已有本地/远程 MySQL 8+ 均直接连接，不需要 Docker 或 mysql 命令行客户端；仅无本地数据库时自动使用 Docker 创建 MySQL，默认只绑定回环地址。
+不会删除或重建原有数据卷，也不会用 `--force` 忽略 SQL 错误。
+
+前置环境为 Linux、Python 3.10–3.12（包含 venv）、Node.js 18+ 和 npm。
+Ubuntu/Debian 可安装对应版本的 Python 与 venv；Node 版本不满足时先安装支持的 Node.js，再运行 setup。
+Python 依赖安装到 `backend/.venv`，前端使用锁文件执行 `npm ci`。可用 `PIP_INDEX_URL` 指定镜像。
+
+生产服务托管及升级：
+
+旧版本曾跟踪 `backend/.env`，首次更新到本版本前应备份该文件，拉取代码后恢复为权限 600，避免 Git 的删除记录移除生产配置。
+
+```bash
+bash stop.sh
+sudo bash setup.sh --systemd
+sudo bash start.sh
+```
+
+已经安装本项目 systemd 服务时，setup 会自动识别该模式（需 root）。安装时要求项目停止，防止替换正在使用的依赖。
+首次安装 systemd 模式默认创建后端和前端预览服务；在当前 192.168.1.24 上会复用仅属于本项目的 Nginx，并更新静态前端目录。
+不会覆盖其他项目的同名服务，也不会接管共享 Nginx。通过 `WATCH_NANDA_SERVICE_USER` 可指定运行账户，默认 root 以兼容现有 SSH 节点；普通账户需要对应的文件、数据库和采集权限。
+初始化不会创建 SSH 免密密钥。节点 Agent 的 HTTPS 入口及内部 CA 接入步骤见 [Agent 接入说明](agent/README.md)。
+`--skip-deps` 可跳过已安装依赖的更新，仍执行数据库校验、迁移和前端构建。
 
 ### 方式二：手动部署
 
 #### 1. 安装依赖
 
 ```bash
-cd backend
-pip install -r requirements.txt
-
-cd ../frontend
-npm install
+# 以下命令均在仓库根目录执行
+python3 -m venv backend/.venv
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
+(cd frontend && npm ci)
 ```
 
 #### 2. 配置数据库连接（唯一需要改的配置）
 
 ```bash
-cd backend
-cp .env.example .env
-vim .env    # 修改 DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
+cp backend/.env.example backend/.env
+chmod 600 backend/.env
+vim backend/.env    # 填写 DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
 ```
 
 `.env` 说明：
@@ -57,12 +77,13 @@ vim .env    # 修改 DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
 #### 3. 初始化数据库
 
 ```bash
-mysql -u root -p < monitor_db.sql
+backend/.venv/bin/python scripts/initialize.py
+(cd frontend && npm run build)
 ```
 
 ### 配置 SSH 免密（后端 → 被监控服务器）
 
-运行后端的机器必须能以节点配置的账号（默认 root）免密 SSH 登录每台被监控服务器，
+仅使用 SSH 采集模式的节点要求后端能以配置的账号（默认 root）免密登录，
 否则节点将一直显示离线：
 
 ```bash
@@ -72,11 +93,17 @@ ssh-copy-id root@<被监控服务器IP>
 ### 启动 / 停止
 
 ```bash
-bash start.sh   # 同时拉起后端(7980)与前端(3000)
-bash stop.sh    # 一键安全关闭
+bash start.sh           # 自动识别本项目 systemd 服务；否则启动后台实例
+bash start.sh --restart # 加载新配置/版本
+bash stop.sh            # 只停止本项目，保留 MySQL 和其他项目
 ```
 
 启动后访问：`http://<服务器IP>:3000`
+
+普通后台模式将 PID、进程启动时间和命令指纹保存在 `.runtime`，日志分别在 `backend/backend.log`、`frontend/frontend.log`。
+启动前校验迁移状态和 7980/3000 端口；端口冲突直接报错，不会悄悄改用 3001。
+停止时验证进程身份再发送 SIGTERM，不会按 `vite`/`npm` 名称全局杀进程。
+systemd 模式日志使用 `journalctl -u watch-nanda-backend`；停止、启动应使用安装时的同一账户，或在 systemd 模式下使用 sudo。
 
 ## 实时数据架构
 

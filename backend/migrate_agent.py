@@ -14,7 +14,7 @@ def migrate(check_only=False):
     print('agent_credentials:', 'missing' if missing_table else 'present')
     if check_only:
         print('Check only: no schema or data changes made.')
-        return
+        return not (missing_column or missing_table)
     if missing_column:
         with engine.begin() as connection:
             if engine.dialect.name == 'mysql':
@@ -28,5 +28,8 @@ def migrate(check_only=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Add the agent schema without altering historical data')
     parser.add_argument('--check', action='store_true', help='Inspect the schema without changing it')
+    parser.add_argument('--require-ready', action='store_true', help='Read-only check, exit 2 if migration is required')
     args = parser.parse_args()
-    migrate(check_only=args.check)
+    ready = migrate(check_only=args.check or args.require_ready)
+    if args.require_ready and not ready:
+        raise SystemExit(2)
