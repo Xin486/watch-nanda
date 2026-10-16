@@ -28,7 +28,8 @@ NAME = 'node-monitor-agent.service'
 
 
 def command(args, *, check=True, timeout=900):
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+    env = dict(os.environ,DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l') if args[0]=='apt-get' else None
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,env=env)
     if check and result.returncode:
         # Command output can include pip configuration. Keep errors bounded and generic.
         raise RuntimeError('命令执行失败：'+Path(args[0]).name+'；检查软件源、权限及节点日志')

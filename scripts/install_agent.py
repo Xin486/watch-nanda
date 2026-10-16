@@ -223,15 +223,14 @@ def parse_args():
     return args
 
 
-def main():
-    args = parse_args()
+def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
+    """Reusable batch entry point; passwords stay in memory and are never logged."""
     try:
         import paramiko
         from models.database import SessionLocal
         from models.models import AgentCredential
     except ImportError:
         raise InstallError('缺少后端依赖，请先在监控中心运行 bash setup.sh') from None
-    password = getpass.getpass('SSH 密码（不显示、不保存）：')
     if not password or '\n' in password or '\r' in password:
         raise InstallError('SSH 密码不能为空或包含换行')
     client = paramiko.SSHClient()
@@ -240,7 +239,7 @@ def main():
     if known_hosts.exists():
         # save_host_keys must retain all previously trusted hosts, not just this one.
         client.load_host_keys(str(known_hosts))
-    client.set_missing_host_key_policy(VerifyHost())
+    client.set_missing_host_key_policy(paramiko.RejectPolicy() if known_hosts_only else VerifyHost())
     remote = Remote(client, password)
     stage = None
     snapshot = digest = release = None
@@ -253,12 +252,12 @@ def main():
             db.rollback()  # Never hold a database transaction during SSH/pip operations.
             print('连接目标并检查 sudo、Linux、systemd 和 Python…', flush=True)
             client.connect(args.ip, port=args.port, username=args.user, password=password,
-                           look_for_keys=False, allow_agent=False, timeout=10, auth_timeout=15, banner_timeout=15)
+                           look_for_keys=use_existing_keys, allow_agent=False, timeout=10, auth_timeout=15, banner_timeout=15)
             remote.root = remote.run('id -u') == '0'
             remote.run('test "$(uname -s)" = Linux && test -d /run/systemd/system && command -v systemctl >/dev/null', root=True)
             if not args.check_only:
                 # Use distro repositories only; never fetch shell scripts from the network.
-                remote.run("if ! command -v python3 >/dev/null; then if command -v apt-get >/dev/null; then apt-get update >&2 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv ca-certificates >&2; elif command -v dnf >/dev/null; then dnf install -y python3 ca-certificates >&2; else exit 10; fi; fi", root=True)
+                remote.run("if ! command -v python3 >/dev/null; then if command -v apt-get >/dev/null; then apt-get update >&2 && DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y python3 python3-venv ca-certificates >&2; elif command -v dnf >/dev/null; then dnf install -y python3 ca-certificates >&2; else exit 10; fi; fi", root=True)
             remote.run("python3 -c 'import sys;sys.exit(0 if sys.version_info >= (3,10) else 10)'")
             stage = remote.run('umask 077; mktemp -d /tmp/watch-nanda-agent.XXXXXXXX')
             if not re.fullmatch(r'/tmp/watch-nanda-agent\.[A-Za-z0-9]+', stage):
@@ -279,7 +278,7 @@ def main():
             if args.check_only or healthy:
                 print('检查完成，未修改节点或凭据。' if args.check_only else 'Agent 版本、节点凭据及配置一致，服务运行正常，跳过重复安装。')
                 completed = True
-                return
+                return {'server_id':server.id if server else None,'status':'checked' if args.check_only else 'already_healthy'}
             print('安装节点依赖并准备隔离版本（可能需要数分钟）…', flush=True)
             release = remote.helper(stage, 'prepare')['release']
             print('签发单节点 Token，部署服务并验证首次 HTTPS 上报…', flush=True)
@@ -294,6 +293,7 @@ def main():
             completed = True
             print(f"安装成功：节点 ID={snapshot['id']}，每 300 秒上报，systemd 已启用开机启动。")
             print('SSH 密码未保存，未创建 SSH 密钥或修改 authorized_keys/crontab。')
+            return {'server_id':snapshot['id'],'status':'installed'}
         except BaseException:
             if release and not activated:
                 try:
@@ -320,6 +320,12 @@ def main():
                 except Exception:
                     print('临时文件未能清理，请在目标机删除 '+stage, file=sys.stderr)
             client.close()
+
+
+def main():
+    args = parse_args()
+    password = getpass.getpass('SSH 密码（不显示、不保存）：')
+    return install(args,password)
 
 
 if __name__ == '__main__':
