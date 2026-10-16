@@ -10,17 +10,51 @@ import re
 import secrets
 import shlex
 import sys
+import tarfile
 import time
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
 DEFAULT_URL = 'https://192.168.1.24/api/agent/report'
+PUBLIC_URL = 'https://114.212.165.149:59443/api/agent/report'
 CONFIG = '/etc/node-monitor-agent/config.json'
 
 
 class InstallError(RuntimeError):
     pass
+
+
+def default_report_url(ip):
+    return DEFAULT_URL if ipaddress.ip_address(ip) in ipaddress.ip_network('192.168.1.0/24') else PUBLIC_URL
+
+
+def bundle_details(path):
+    """Validate a trusted local build before invoking tar on the remote host."""
+    with tarfile.open(path,'r:gz') as archive:
+        members=archive.getmembers()
+        if len(members)>5000 or sum(member.size for member in members)>150*1024*1024:
+            raise InstallError('Agent 安装包过大或文件数异常')
+        for member in members:
+            name=PurePosixPath(member.name)
+            if not name.parts or name.is_absolute() or '..' in name.parts or name.parts[0]!='node-monitor-agent' or not (member.isfile() or member.isdir() or member.issym()):
+                raise InstallError('Agent 安装包包含不安全路径或文件类型')
+            if member.issym():
+                target=name.parent/PurePosixPath(member.linkname)
+                depth=0
+                for part in target.parts:
+                    depth += -1 if part=='..' else (0 if part=='.' else 1)
+                    if depth<1 or PurePosixPath(member.linkname).is_absolute():
+                        raise InstallError('Agent 安装包包含越界符号链接')
+        stream=archive.extractfile('node-monitor-agent/manifest.json')
+        if stream is None: raise InstallError('Agent 安装包缺少 manifest.json')
+        manifest=json.load(stream)
+    expected=hashlib.sha256((ROOT/'agent/monitor_agent.py').read_bytes()).hexdigest()
+    helper=hashlib.sha256((ROOT/'agent/install_node.py').read_bytes()).hexdigest()
+    if manifest.get('format')!=1 or manifest.get('source_sha256')!=expected or manifest.get('installer_sha256')!=helper:
+        raise InstallError('Agent 安装包与当前源代码不一致，请重新构建')
+    return manifest,hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class VerifyHost:
@@ -43,6 +77,7 @@ class Remote:
         self.client = client
         self.password = password
         self.root = False
+        self.installer = None
 
     def run(self, script, *, root=False, timeout=900):
         command = 'bash -c ' + shlex.quote(script)
@@ -82,7 +117,8 @@ class Remote:
 
     def helper(self, stage, action, **kwargs):
         arguments = ' '.join(shlex.quote(str(x)) for pair in kwargs.items() for x in ('--'+pair[0].replace('_','-'), pair[1]))
-        value = self.run(f'python3 {shlex.quote(stage+"/install_node.py")} {action} --stage {shlex.quote(stage)} {arguments}', root=True)
+        prefix = shlex.quote(self.installer)+' --installer' if self.installer else 'python3 '+shlex.quote(stage+'/install_node.py')
+        value = self.run(f'{prefix} {action} --stage {shlex.quote(stage)} {arguments}', root=True)
         result = json.loads(value)
         if not result.get('ok'):
             raise InstallError(result.get('error', '节点安装失败'))
@@ -90,8 +126,11 @@ class Remote:
 
     def put(self, stage, name, content, mode=0o644):
         with self.client.open_sftp() as sftp:
+            sftp.get_channel().settimeout(60)
             path = stage + '/' + name
             with sftp.file(path, 'wb') as stream:
+                if len(content)>131072:
+                    stream.set_pipelined(True)
                 stream.write(content)
             sftp.chmod(path, mode)
 
@@ -169,7 +208,7 @@ def restore_credentials(db, snapshot, digest):
     db.commit()
 
 
-def already_healthy(server, credential, check, url, ca_hash):
+def already_healthy(server, credential, check, url, ca_hash, bundle_hash=None):
     from core.status import collection_time
     from datetime import datetime
     received = collection_time({'timestamp':(server.latest_status_data or {}).get('received_at')}) if server else None
@@ -177,6 +216,7 @@ def already_healthy(server, credential, check, url, ca_hash):
                 and received and 0 <= (datetime.utcnow()-received).total_seconds() <= 720
                 and check.get('active') and check.get('server_id') == server.id
                 and check.get('config_safe') and check.get('account_safe')
+                and (not bundle_hash or check.get('bundle_sha256')==bundle_hash)
                 and check.get('token_hash') == credential.token_hash and check.get('url') == url
                 and check.get('program_hash') == hashlib.sha256((ROOT/'agent'/'monitor_agent.py').read_bytes()).hexdigest()
                 and check.get('ca_hash') == ca_hash and check.get('interval_seconds') == 300)
@@ -188,8 +228,10 @@ def parse_args():
     parser.add_argument('--user', help='SSH 用户，默认 root；非 root 需 sudo（使用同一密码）')
     parser.add_argument('--port', type=int, help='SSH 端口，默认 22')
     parser.add_argument('--server-id', type=int, help='明确使用已有节点 ID，适用于 SD-WAN/NAT 或重复 IP')
-    parser.add_argument('--url', default=DEFAULT_URL, help='HTTPS 上报地址，默认当前生产中心 192.168.1.24')
+    parser.add_argument('--url', help='HTTPS 上报地址；192.168.1.* 默认内网入口，其余默认 114.212.165.149:59443')
     parser.add_argument('--ca-file', type=Path, help='内部 CA 公钥证书，默认 /etc/node-monitor/tls/ca.crt；不要提供 CA 私钥')
+    parser.add_argument('--bundle', type=Path, help='独立运行包；默认自动使用 agent/dist 中对应架构的安装包')
+    parser.add_argument('--source', action='store_true', help='强制使用旧版 Python/venv 安装方式')
     parser.add_argument('--check-only', action='store_true', help='只检查环境、证书和服务，不安装依赖或签发凭据')
     args = parser.parse_args()
     args.ip = args.ip or input('目标机器 IP：').strip()
@@ -206,10 +248,13 @@ def parse_args():
         parser.error('SSH 用户名或端口不合法')
     if args.server_id is not None and args.server_id < 1:
         parser.error('--server-id 必须为正整数')
+    if args.source and args.bundle:
+        parser.error('--source 与 --bundle 不能同时使用')
+    args.url=args.url or default_report_url(args.ip)
     url = urlparse(args.url)
     if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
         parser.error('--url 需要不含凭据的 HTTPS 地址')
-    if args.ca_file is None and args.url == DEFAULT_URL:
+    if args.ca_file is None and args.url in (DEFAULT_URL,PUBLIC_URL):
         args.ca_file = Path('/etc/node-monitor/tls/ca.crt')
     if args.ca_file is not None:
         import ssl
@@ -242,6 +287,7 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
     client.set_missing_host_key_policy(paramiko.RejectPolicy() if known_hosts_only else VerifyHost())
     remote = Remote(client, password)
     stage = None
+    bundle_hash = None
     snapshot = digest = release = None
     activated = completed = False
     with SessionLocal() as db:
@@ -255,15 +301,39 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
                            look_for_keys=use_existing_keys, allow_agent=False, timeout=10, auth_timeout=15, banner_timeout=15)
             remote.root = remote.run('id -u') == '0'
             remote.run('test "$(uname -s)" = Linux && test -d /run/systemd/system && command -v systemctl >/dev/null', root=True)
-            if not args.check_only:
+            bundle=getattr(args,'bundle',None)
+            if not getattr(args,'source',False):
+                architecture=remote.run('uname -m')
+                candidate=ROOT/'agent'/'dist'/f'node-monitor-agent-linux-{architecture}.tar.gz'
+                if bundle is None and candidate.is_file(): bundle=candidate
+            if bundle:
+                manifest,bundle_hash=bundle_details(bundle)
+                if remote.run('uname -m')!=manifest.get('architecture'):
+                    raise InstallError('Agent 安装包架构与目标机器不一致')
+                try:
+                    libc=remote.run('getconf GNU_LIBC_VERSION').split()[-1]
+                    required=manifest.get('glibc_min','2.17')
+                    if not re.fullmatch(r'\d+\.\d+',libc) or tuple(map(int,libc.split('.')))<tuple(map(int,required.split('.'))):
+                        raise InstallError('目标 glibc 版本低于独立包要求；不会修改系统运行库')
+                except (IndexError,ValueError):
+                    raise InstallError('无法识别 glibc 版本，暂不支持 Alpine/musl 系统') from None
+            elif not args.check_only:
                 # Use distro repositories only; never fetch shell scripts from the network.
                 remote.run("if ! command -v python3 >/dev/null; then if command -v apt-get >/dev/null; then apt-get update >&2 && DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y python3 python3-venv ca-certificates >&2; elif command -v dnf >/dev/null; then dnf install -y python3 ca-certificates >&2; else exit 10; fi; fi", root=True)
-            remote.run("python3 -c 'import sys;sys.exit(0 if sys.version_info >= (3,10) else 10)'")
+            if not bundle:
+                remote.run("python3 -c 'import sys;sys.exit(0 if sys.version_info >= (3,10) else 10)'")
             stage = remote.run('umask 077; mktemp -d /tmp/watch-nanda-agent.XXXXXXXX')
             if not re.fullmatch(r'/tmp/watch-nanda-agent\.[A-Za-z0-9]+', stage):
                 raise InstallError('无法创建安全的远端临时目录')
             for name in ('install_node.py','monitor_agent.py','requirements.txt','node-monitor-agent.service'):
                 remote.put(stage, name, (ROOT/'agent'/name).read_bytes())
+            if bundle:
+                remote.put(stage,'agent-bundle.tar.gz',bundle.read_bytes())
+                remote.run('test "$(sha256sum '+shlex.quote(stage+'/agent-bundle.tar.gz')+' | cut -d " " -f 1)" = '+shlex.quote(bundle_hash))
+                remote.run('tar --no-same-owner -xzf '+shlex.quote(stage+'/agent-bundle.tar.gz')+' -C '+shlex.quote(stage))
+                remote.run(shlex.quote(stage+'/node-monitor-agent/node-monitor-agent')+' --self-test')
+                remote.installer=stage+'/node-monitor-agent/node-monitor-agent'
+                remote.put(stage,'bundle.sha256',(bundle_hash+'\n').encode())
             ca = args.ca_file.read_bytes() if args.ca_file else None
             if ca:
                 remote.put(stage, 'ca.crt', ca)
@@ -273,7 +343,7 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
             print(f"检查通过：{check['hostname']}，Python {check['python_version']}，HTTPS 证书有效；Agent={'运行中' if check['active'] else '未运行'}")
             server = find_server(db, args.ip, args.port, args.server_id)
             credential = db.get(AgentCredential, server.id) if server else None
-            healthy = already_healthy(server, credential, check, args.url, hashlib.sha256(ca).hexdigest() if ca else None)
+            healthy = already_healthy(server, credential, check, args.url, hashlib.sha256(ca).hexdigest() if ca else None,bundle_hash)
             db.rollback()
             if args.check_only or healthy:
                 print('检查完成，未修改节点或凭据。' if args.check_only else 'Agent 版本、节点凭据及配置一致，服务运行正常，跳过重复安装。')

@@ -28,7 +28,14 @@ NAME = 'node-monitor-agent.service'
 
 
 def command(args, *, check=True, timeout=900):
-    env = dict(os.environ,DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l') if args[0]=='apt-get' else None
+    env = dict(os.environ)
+    if getattr(sys,'frozen',False):
+        if env.get('LD_LIBRARY_PATH_ORIG'):
+            env['LD_LIBRARY_PATH']=env['LD_LIBRARY_PATH_ORIG']
+        else:
+            env.pop('LD_LIBRARY_PATH',None)
+        env['PYINSTALLER_RESET_ENVIRONMENT']='1'
+    if args[0]=='apt-get': env.update(DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l')
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,env=env)
     if check and result.returncode:
         # Command output can include pip configuration. Keep errors bounded and generic.
@@ -55,9 +62,11 @@ def check_owned_service():
         expected = ('Description=Node Monitor metrics reporting agent', 'User=node-monitor', 'Group=node-monitor')
         starts = [line for line in text.splitlines() if line.startswith('ExecStart=')]
         valid = [f'ExecStart={BASE}/{prefix}venv/bin/python {BASE}/{prefix}monitor_agent.py --config {ETC}/config.json' for prefix in ('','current/')]
+        valid.append(f'ExecStart={BASE}/current/node-monitor-agent --config {ETC}/config.json')
         if not all(item in text.splitlines() for item in expected) or starts not in [[line] for line in valid]:
             raise RuntimeError('同名服务不是本项目标准 Agent，不会覆盖；请先人工核对')
-        if command(['systemctl','show',NAME,'-p','DropInPaths','--value']).stdout.strip():
+        dropins=command(['systemctl','show',NAME,'-p','DropInPaths']).stdout.strip()
+        if dropins.partition('=')[2].strip():
             raise RuntimeError('Agent 服务有自定义 drop-in，请先人工核对，避免覆盖定制配置')
     elif UNIT.exists():
         raise RuntimeError('已有未加载的同名服务文件，请先人工核对')
@@ -114,6 +123,16 @@ def check(stage, url):
     program = BASE/'current'/'monitor_agent.py' if (BASE/'current').is_symlink() else BASE/'monitor_agent.py'
     if program.exists():
         result['program_hash'] = hashlib.sha256(program.read_bytes()).hexdigest()
+    manifest=BASE/'current'/'manifest.json'
+    if manifest.is_file():
+        details=json.loads(manifest.read_text())
+        for name,digest in details['files'].items():
+            path=manifest.parent/name
+            if not path.is_file() or path.is_symlink() or path.stat().st_uid!=0 or path.stat().st_mode & 0o022 or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+                raise RuntimeError('已安装独立包文件校验失败：'+name)
+        result['program_hash']=details['source_sha256']
+        result['runtime_kind']='standalone'
+        result['bundle_sha256']=(BASE/'current'/'bundle.sha256').read_text().strip()
     return result
 
 
@@ -181,6 +200,24 @@ def prepare(stage):
     release.mkdir(mode=0o755)
     write_file(PENDING,json.dumps({'release':str(release)}).encode())
     try:
+        bundle=stage/'node-monitor-agent'
+        if (bundle/'manifest.json').is_file():
+            manifest=json.loads((bundle/'manifest.json').read_text())
+            import platform
+            if manifest.get('format')!=1 or manifest.get('architecture')!=platform.machine():
+                raise RuntimeError('独立包的格式或 CPU 架构不匹配')
+            for name,digest in manifest['files'].items():
+                file=bundle/name
+                if file.is_symlink() or not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest()!=digest:
+                    raise RuntimeError('独立包文件校验失败：'+name)
+            account()
+            shutil.copytree(bundle,release,dirs_exist_ok=True,symlinks=True)
+            for path in release.rglob('*'):
+                if not path.is_symlink():
+                    path.chmod(0o755 if path.is_dir() or path.name=='node-monitor-agent' else 0o644)
+            write_file(release/'bundle.sha256',(stage/'bundle.sha256').read_bytes(),0o644)
+            command([str(release/'node-monitor-agent'),'--self-test'])
+            return {'release':str(release),'runtime':'standalone'}
         try:
             import ensurepip
         except ImportError:
@@ -231,10 +268,19 @@ def activate(stage, release):
     link.symlink_to(release)
     link.replace(BASE/'current')
     template = (stage/'node-monitor-agent.service').read_text()
-    template = template.replace(str(BASE)+'/venv',str(BASE)+'/current/venv').replace(str(BASE)+'/monitor_agent.py',str(BASE)+'/current/monitor_agent.py')
+    standalone=(release/'node-monitor-agent').is_file()
+    if standalone:
+        lines=template.splitlines()
+        template='\n'.join(f'ExecStart={BASE}/current/node-monitor-agent --config {ETC}/config.json' if line.startswith('ExecStart=') else line for line in lines)+'\n'
+    else:
+        template = template.replace(str(BASE)+'/venv',str(BASE)+'/current/venv').replace(str(BASE)+'/monitor_agent.py',str(BASE)+'/current/monitor_agent.py')
+    version=command(['systemctl','--version']).stdout.split()
+    if len(version)>1 and version[1].isdigit() and int(version[1])<232:
+        template=template.replace('ProtectSystem=strict','ProtectSystem=full').replace('MemoryMax=','MemoryLimit=')
     write_file(UNIT,template.encode(),0o644)
     command(['systemctl','daemon-reload'])
-    once = ['runuser','-u','node-monitor','--',str(release/'venv/bin/python'),str(release/'monitor_agent.py'),'--config',str(ETC/'config.json'),'--once']
+    executable=[str(release/'node-monitor-agent')] if standalone else [str(release/'venv/bin/python'),str(release/'monitor_agent.py')]
+    once = ['runuser','-u','node-monitor','--',*executable,'--config',str(ETC/'config.json'),'--once']
     result = command(once,check=False,timeout=150)
     if result.returncode and 'HTTP 429' in result.stdout:
         time.sleep(31)
@@ -297,13 +343,13 @@ def operation_lock():
         yield
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('action',choices=['check','prepare','activate','rollback','finish'])
     parser.add_argument('--stage',type=Path,required=True)
     parser.add_argument('--url')
     parser.add_argument('--release')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if os.geteuid() != 0:
         raise RuntimeError('需要 root 或 sudo 权限')
     os.umask(0o022)  # venv files must remain readable by the service account.
@@ -325,9 +371,13 @@ def main():
         return {}
 
 
-if __name__ == '__main__':
+def entrypoint(argv=None):
     try:
-        print(json.dumps({'ok':True,**main()}))
+        print(json.dumps({'ok':True,**main(argv)}))
     except Exception as error:
         message = str(error) if isinstance(error,RuntimeError) else type(error).__name__
         print(json.dumps({'ok':False,'error':message}))
+
+
+if __name__ == '__main__':
+    entrypoint()

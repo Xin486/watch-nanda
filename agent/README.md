@@ -6,7 +6,35 @@
 没有监听端口，不使用 SSH 密钥，不接受远程命令或自动更新。节点仅需访问监控中心 HTTPS 443。
 CPU 为采集时 1 秒窗口的利用率；其余指标为当时快照，不是过去 5 分钟的平均值或峰值。
 
-## 交互式检查与自动安装（推荐）
+## 独立运行包（推荐）
+
+构建机只需 Linux + Docker；节点无需 Python、venv、pip 或访问 PyPI。
+独立包包含 Python、OpenSSL、NVML Python 绑定及证书依赖，NVIDIA 驱动由节点原系统提供，不随包安装或更换。
+目前支持 Linux x86_64/aarch64，需在对应架构构建；默认 manylinux2014 基线为 glibc 2.17，不适用于 Alpine/musl。
+
+在监控中心的仓库根目录执行一次：
+
+```bash
+bash agent/build.sh
+sudo bash install-agent.sh
+```
+
+构建产物位于 `agent/dist/node-monitor-agent-linux-<架构>.tar.gz`，附 SHA-256 校验文件及 manifest，记录源代码、安装器、构建镜像、依赖版本和逐文件校验值。
+安装器发现对应包时优先使用独立程序，检测架构、验证安装包与文件完整性后部署；目标机器不调用 Python/pip，不替换系统 Python。
+独立目录可整体复制，无需临时解压执行；程序由 root 管理，常驻服务以 node-monitor 账户运行。
+包不含密码、Token、CA 私钥或 SSH 私钥；中心的 CA 公钥证书和每节点配置在部署时分别传输。
+
+```bash
+tar -xzf node-monitor-agent-linux-x86_64.tar.gz
+./node-monitor-agent/node-monitor-agent --self-test
+./node-monitor-agent/node-monitor-agent --config /etc/node-monitor-agent/config.json --once
+```
+
+`--self-test` 只检查运行时和依赖，不读取节点凭据、不向中心上报。需要额外指定安装包时使用 `--bundle /path/to/package.tar.gz`。
+程序内置的本地安装子命令仅供管理员通过 SSH 调用，不通过上报接口接收远程命令。
+旧版源码安装方式仍可通过 `--source` 使用；没有构建包时保留原 Python/venv 流程，只有该流程要求目标 Python 3.10+。
+
+## 交互式检查与自动安装
 
 先在监控中心完成 `setup.sh` 初始化及 HTTPS 配置，再从仓库根目录运行：
 
@@ -27,18 +55,19 @@ sudo bash install-agent.sh --ip 172.16.66.177 --user test --port 22 --check-only
 ```
 
 `--check-only` 仅检查 SSH/sudo、Linux/systemd、Python、节点时钟、TLS 证书及已有 Agent 状态，不安装系统包、不修改节点记录、不签发 Token。
-默认上报到 `https://192.168.1.24/api/agent/report`，自动传输 `/etc/node-monitor/tls/ca.crt` 公钥证书；不会传输中心 CA 或服务器私钥。其他中心可指定：
+`192.168.1.0/24` 中的目标默认上报到 `https://192.168.1.24/api/agent/report`，其余目标默认使用 `https://114.212.165.149:59443/api/agent/report`。
+两个入口均自动传输 `/etc/node-monitor/tls/ca.crt` 公钥证书，保留证书和 IP 校验；不会传输中心 CA 或服务器私钥。其他中心可通过 `--url` 指定：
 
 ```bash
 sudo bash install-agent.sh --url https://monitor.example.com/api/agent/report
 sudo bash install-agent.sh --url https://10.0.0.24/api/agent/report --ca-file /path/to/ca.crt
 ```
 
-目标需运行 Linux 和 systemd，支持 Python 3.10+。Python/venv 缺失时尝试使用系统 apt/dnf 仓库安装；旧发行版默认 Python 低于 3.10 时停止并提示先升级，不替换系统 Python。
-目标需能访问监控中心 443 以及软件源/PyPI；脚本安装独立 venv 和 NVIDIA NVML Python 包，不安装或更换 GPU 驱动。
+目标需运行 Linux 和 systemd，并能访问对应 HTTPS 上报入口（内网 443 / 公网 59443）；独立包部署不要求目标连接软件源。
+只有使用旧源码方式时才需要 Python 3.10+、venv 和软件源/PyPI，缺失时尝试使用系统 apt/dnf 安装；旧发行版默认 Python 低于 3.10 时停止，不替换系统 Python。
 节点时间需与中心相差不超过 55 秒。无 GPU 的机器也可以安装；GPU 读取失败仍按 Agent 原有行为记录错误。
 
-依赖在 `/opt/node-monitor-agent/releases/<版本ID>` 中准备好之后才签发单节点 Token。配置保存为 root:node-monitor 的 640 文件，服务由独立低权限账户运行，每 300 秒上报。
+安装包或源码依赖在 `/opt/node-monitor-agent/releases/<版本ID>` 中准备好之后才签发单节点 Token。配置保存为 root:node-monitor 的 640 文件，服务由独立低权限账户运行，每 300 秒上报。
 脚本先以服务账户验证一次真实 HTTPS 上报，再启用 systemd 开机启动；凭据、版本、证书及配置一致且近期已上报的健康 Agent 会跳过重复安装。
 不会操作监控中心服务，不会覆盖不属于本项目的同名服务或自定义 systemd drop-in。
 

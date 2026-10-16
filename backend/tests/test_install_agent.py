@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import tarfile
 from pathlib import Path
 import sys
 import tempfile
@@ -25,6 +26,52 @@ spec.loader.exec_module(installer)
 class InstallerTests(unittest.TestCase):
     setUp = test_monitor.MonitorTests.setUp
     tearDown = test_monitor.MonitorTests.tearDown
+
+    def bundle(self,directory,unsafe=False):
+        path=Path(directory)/'agent.tar.gz'
+        manifest={'format':1,'architecture':'x86_64','glibc_min':'2.17',
+                  'source_sha256':hashlib.sha256((ROOT/'agent/monitor_agent.py').read_bytes()).hexdigest(),
+                  'installer_sha256':hashlib.sha256((ROOT/'agent/install_node.py').read_bytes()).hexdigest()}
+        data=json.dumps(manifest).encode()
+        with tarfile.open(path,'w:gz') as archive:
+            item=tarfile.TarInfo('node-monitor-agent/manifest.json');item.size=len(data)
+            archive.addfile(item,io.BytesIO(data))
+            if unsafe:
+                item=tarfile.TarInfo('../../etc/unsafe');item.size=1
+                archive.addfile(item,io.BytesIO(b'x'))
+        return path
+
+    def test_internal_and_public_addresses_are_selected_by_target_subnet(self):
+        self.assertEqual(installer.default_report_url('192.168.1.8'),installer.DEFAULT_URL)
+        for address in ('192.168.2.8','114.212.173.212','172.16.66.177','::1'):
+            self.assertEqual(installer.default_report_url(address),installer.PUBLIC_URL)
+        args=['install_agent.py','--ip','114.212.173.212','--user','root','--port','22','--url','https://custom.invalid/report']
+        with patch.object(sys,'argv',args):
+            self.assertEqual(installer.parse_args().url,'https://custom.invalid/report')
+
+    def test_bundle_validation_rejects_path_traversal_and_stale_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=self.bundle(directory)
+            manifest,digest=installer.bundle_details(path)
+            self.assertEqual(manifest['architecture'],'x86_64')
+            self.assertEqual(digest,hashlib.sha256(path.read_bytes()).hexdigest())
+            path=self.bundle(directory,unsafe=True)
+            with self.assertRaises(installer.InstallError): installer.bundle_details(path)
+
+    def test_standalone_install_never_invokes_target_python_or_pip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle=self.bundle(directory)
+            remote,_,_=self.fake()
+            remote.run.side_effect=lambda command,**kwargs: 'x86_64' if command=='uname -m' else ('glibc 2.17' if command=='getconf GNU_LIBC_VERSION' else ('0' if command=='id -u' else '/tmp/watch-nanda-agent.TEST1234'))
+            stack,_,_=self.invoke(remote)
+            with stack:
+                options=installer.parse_args();options.bundle=bundle
+                result=installer.install(options,'test-only-ssh-secret')
+            self.assertEqual(result['status'],'installed')
+            commands=[c.args[0] for c in remote.run.call_args_list]
+            self.assertFalse(any('python3' in c or 'pip install' in c for c in commands))
+            self.assertTrue(any(' --self-test' in c for c in commands))
+            self.assertTrue(any(c.args[1]=='agent-bundle.tar.gz' for c in remote.put.call_args_list))
 
     def fake(self):
         remote = Mock()
@@ -260,6 +307,26 @@ class NodeInstallerTests(unittest.TestCase):
         result=Mock(stdout=f'LoadState=loaded\nFragmentPath={self.unit}\n')
         with patch.object(self.node,'command',return_value=result),self.assertRaises(RuntimeError): self.node.check_owned_service()
         with self.assertRaises(RuntimeError): self.node.release_path('/opt/other-project')
+
+    def test_frozen_installer_does_not_pass_bundled_library_path_to_system_commands(self):
+        with patch.object(self.node.sys,'frozen',True,create=True),patch.dict(self.node.os.environ,{'LD_LIBRARY_PATH':'/bundle','LD_LIBRARY_PATH_ORIG':'/system'}),patch.object(self.node.subprocess,'run',return_value=Mock(returncode=0)) as run:
+            self.node.command(['systemctl','--version'])
+        env=run.call_args.kwargs['env']
+        self.assertEqual(env['LD_LIBRARY_PATH'],'/system')
+        self.assertEqual(env['PYINSTALLER_RESET_ENVIRONMENT'],'1')
+
+    def test_bundle_prepare_checks_files_and_never_installs_dependencies(self):
+        stage=Path(self.temp.name)/'stage';bundle=stage/'node-monitor-agent';bundle.mkdir(parents=True)
+        (bundle/'node-monitor-agent').write_bytes(b'test executable')
+        manifest={'format':1,'architecture':__import__('platform').machine(),'files':{'node-monitor-agent':hashlib.sha256(b'test executable').hexdigest()}}
+        (bundle/'manifest.json').write_text(json.dumps(manifest))
+        (stage/'bundle.sha256').write_text('test hash')
+        with patch.object(self.node,'check_owned_service'),patch.object(self.node,'account',return_value=100),patch.object(self.node,'command') as command:
+            result=self.node.prepare(stage)
+        executable=Path(result['release'])/'node-monitor-agent'
+        self.assertEqual(executable.read_bytes(),b'test executable')
+        self.assertEqual(executable.stat().st_mode&0o777,0o755)
+        command.assert_called_once_with([str(executable),'--self-test'])
 
 
 if __name__=='__main__': unittest.main()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux metrics-only agent. No listener, SSH keys, subprocesses or remote commands."""
+"""Linux metrics-only runtime; the bundled installer is a separate local root CLI."""
 import argparse
 import json
 import logging
@@ -8,6 +8,7 @@ from pathlib import Path
 import random
 import ssl
 import stat
+import sys
 import time
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
@@ -117,6 +118,10 @@ def load_config(path):
 
 def send(config, report):
     context = ssl.create_default_context(cafile=config.get('ca_file'))
+    if not config.get('ca_file') and not context.get_ca_certs():
+        # Embedded Python may use a build-host CA path that is absent on this OS.
+        import certifi
+        context.load_verify_locations(cafile=certifi.where())
     opener = build_opener(HTTPSHandler(context=context), NoRedirect())
     body = json.dumps(report, allow_nan=False).encode()
     if len(body) > 65536:
@@ -163,10 +168,23 @@ def run(config, once=False):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] == ['--installer']:
+        import install_node
+        install_node.entrypoint(sys.argv[2:])
+        raise SystemExit(0)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', required=True)
+    parser.add_argument('--config')
     parser.add_argument('--once', action='store_true')
+    parser.add_argument('--self-test', action='store_true', help='Check embedded runtime/dependencies without reading credentials or reporting')
     args = parser.parse_args()
+    if args.self_test:
+        import platform
+        import pynvml
+        print(json.dumps({'ok':True,'frozen':bool(getattr(sys,'frozen',False)),'python':platform.python_version(),
+                          'architecture':platform.machine(),'openssl':ssl.OPENSSL_VERSION}))
+        raise SystemExit(0)
+    if not args.config:
+        parser.error('--config is required unless --self-test is used')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
     result = run(load_config(args.config), args.once)
     if args.once and not result:
