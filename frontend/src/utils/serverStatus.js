@@ -2,7 +2,7 @@ export const statusLabel = status => ({ online: '在线', offline: '离线', sta
 
 export function freshServer(server, elapsedSeconds = 0) {
   const age = server.data_age_seconds == null ? null : server.data_age_seconds + Math.max(0, elapsedSeconds)
-  const status = age == null ? 'pending' : age > (server.stale_after_seconds || 180) ? 'stale' : server.collection_status
+  const status = age == null ? 'pending' : server.offline_after_seconds && age > server.offline_after_seconds ? 'offline' : age > (server.stale_after_seconds || 180) ? 'stale' : server.collection_status
   return { ...server, status, data_age_seconds: age }
 }
 

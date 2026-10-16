@@ -38,6 +38,14 @@ test('freshness expires without network messages and preserves pending/offline d
   assert.equal(freshServer({...s,collection_status:'offline'},0).status,'offline')
 })
 
+test('agent freshness uses slower thresholds and transitions to offline during disconnection',()=>{
+  const s={collection_status:'online',data_age_seconds:720,stale_after_seconds:720,offline_after_seconds:960}
+  assert.equal(freshServer(s,0).status,'online')
+  assert.equal(freshServer(s,1).status,'stale')
+  assert.equal(freshServer(s,240).status,'stale')
+  assert.equal(freshServer(s,241).status,'offline')
+})
+
 test('SSE remains authoritative over late REST; silent stream starts fallback; cleanup closes connection',async()=>{
   const requests=[],sources=[]; let now=1000
   const h=setup('composables/useServers.js',['useServers'],{

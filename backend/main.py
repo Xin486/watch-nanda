@@ -12,19 +12,20 @@ import json
 import time
 import urllib.request
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 import asyncio
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from models.database import SessionLocal, get_db
-from models.models import AlertConfig, EmailConfig, Server, ServerStats
+from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCredential
+from core.agent import Report, accept_report
 from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, monitor_once
 from core.status import server_payload
 from core.history import history_payload
@@ -64,8 +65,9 @@ class ServerCreate(BaseModel):
     hostname: str
     ip_address: str
     group_name: str
-    ssh_user: str
-    ssh_port: int
+    ssh_user: str = 'root'
+    ssh_port: int = 22
+    collection_mode: Literal['ssh', 'agent'] = 'agent'
 
 
 class ServerUpdate(BaseModel):
@@ -73,8 +75,9 @@ class ServerUpdate(BaseModel):
     hostname: str
     ip_address: str
     group_name: str
-    ssh_user: str
-    ssh_port: int
+    ssh_user: str = 'root'
+    ssh_port: int = 22
+    collection_mode: Optional[Literal['ssh', 'agent']] = None
 
 
 class AlertUpdate(BaseModel):
@@ -122,22 +125,24 @@ def add_server(data: ServerCreate, db: Session = Depends(get_db)):
         group_name=data.group_name,
         ssh_user=data.ssh_user,
         ssh_port=data.ssh_port,
+        collection_mode=data.collection_mode,
         is_active=True,
         status="offline",
     )
     db.add(new_server)
     db.commit()
-    return {"success": True, "message": "服务器添加成功"}
+    return {"success": True, "message": "服务器添加成功", "server_id": new_server.id}
 
 
 @app.post("/api/server/{server_id}/update")
 def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_db)):
     """更新节点基本信息"""
-    server = db.query(Server).filter(Server.id == server_id).first()
+    server = db.query(Server).filter(Server.id == server_id).with_for_update().first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    connection_changed = any(getattr(server, key) != getattr(data, key)
+    mode = data.collection_mode or server.collection_mode
+    connection_changed = mode != server.collection_mode or any(getattr(server, key) != getattr(data, key)
                              for key in ("hostname", "ip_address", "ssh_user", "ssh_port"))
     if connection_changed:
         server.latest_status_data = None
@@ -149,6 +154,11 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
     server.group_name = data.group_name
     server.ssh_user = data.ssh_user
     server.ssh_port = data.ssh_port
+    if mode != server.collection_mode:
+        credential = db.get(AgentCredential, server_id)
+        if credential:
+            db.delete(credential)
+    server.collection_mode = mode
     db.commit()
     return {"success": True}
 
@@ -156,15 +166,35 @@ def update_server(server_id: int, data: ServerUpdate, db: Session = Depends(get_
 @app.delete("/api/server/{server_id}")
 def delete_server_node(server_id: int, db: Session = Depends(get_db)):
     """彻底删除一台服务器节点及其所有历史数据"""
-    server = db.query(Server).filter(Server.id == server_id).first()
+    server = db.query(Server).filter(Server.id == server_id).with_for_update().first()
     if not server:
         return {"success": False, "message": "找不到该服务器"}
 
     # 先删除名下的历史数据，防止触发外键约束错误
     db.query(ServerStats).filter(ServerStats.server_id == server_id).delete()
+    db.query(AgentCredential).filter(AgentCredential.server_id == server_id).delete()
     db.delete(server)
     db.commit()
     return {"success": True, "message": "服务器已彻底删除"}
+
+
+@app.post('/api/agent/report')
+async def agent_report(request: Request, db: Session = Depends(get_db)):
+    """Bound the body before parsing it, including chunked requests."""
+    authorization = request.headers.get('authorization', '')
+    if not authorization.startswith('Bearer ') or not 32 <= len(authorization[7:]) <= 256:
+        raise HTTPException(401, 'A node Bearer token is required')
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 65536:
+            raise HTTPException(413, 'Report exceeds 64 KiB')
+        body.extend(chunk)
+    try:
+        report = Report.model_validate_json(bytes(body))
+    except ValidationError:
+        raise HTTPException(422, 'Invalid metrics report') from None
+    # Sync database work must not block the SSE event loop.
+    return await asyncio.to_thread(accept_report, db, report, authorization[7:])
 
 
 # ---------------------------------------------------------------------------

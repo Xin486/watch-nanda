@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import re
 import smtplib
 import xml.etree.ElementTree as ET
+from sqlalchemy import null
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -27,9 +28,10 @@ from email.utils import formataddr
 import paramiko
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from core.status import freshness
+from core.status import freshness, collection_time
+from core.config import settings
 from models.database import SessionLocal
-from models.models import AlertConfig, EmailConfig, Server, ServerStats
+from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCredential
 
 # 内存级并发锁：记录正在采集的 Server ID，防止同一节点重复采集
 running_tasks = set()
@@ -254,8 +256,29 @@ def send_email_wrapper(db, subject, content, recipient=None, is_test=False):
 # 离线告警巡检（每分钟执行一次）
 # ---------------------------------------------------------------------------
 def check_server_alerts():
-    """仅对新鲜且明确失败的采集告警，平台采集停滞不冒充节点离线。"""
+    """SSH 明确失败及 Agent 超时告警；使用服务端时间判断失联。"""
     now = datetime.utcnow()
+    # Agent silence is inferred from server receipt time, never the node clock.
+    recoveries = []
+    with SessionLocal() as db:
+        alert_config = db.query(AlertConfig).first()
+        alerts_enabled = bool(alert_config and alert_config.enable_email_alert)
+        for server in db.query(Server).filter(Server.is_active == True, Server.collection_mode == 'agent').order_by(Server.id).with_for_update().all():
+            effective, age = freshness(server, now)
+            if effective == 'offline':
+                server.status = 'offline'
+                server.offline_since = server.offline_since or server.last_online
+            elif effective == 'online' and server.last_alert_time:
+                recoveries.append((server.id, server.hostname, server.last_alert_time))
+        db.commit()
+    if not alerts_enabled:
+        return
+    for sid, hostname, previous_alert in recoveries:
+        success, _ = send_email_wrapper(None, f'【恢复】服务器 {hostname} 已恢复上报', f'节点 {hostname} 已恢复指标上报。')
+        if success:
+            with SessionLocal() as db:
+                db.query(Server).filter(Server.id == sid, Server.last_alert_time == previous_alert).update({Server.last_alert_time: None})
+                db.commit()
     with SessionLocal() as db:
         config = db.query(AlertConfig).first()
         if not config or not config.enable_email_alert:
@@ -265,7 +288,8 @@ def check_server_alerts():
         for server in db.query(Server).filter(Server.is_active == True, Server.status == "offline").all():
             if freshness(server, now)[0] != "offline" or not server.offline_since:
                 continue
-            if (now - server.offline_since).total_seconds() < threshold * 60:
+            wait = max(settings.AGENT_OFFLINE_SECONDS, threshold * 60) if server.collection_mode == 'agent' else threshold * 60
+            if (now - server.offline_since).total_seconds() < wait:
                 continue
             if server.last_alert_time and (now - server.last_alert_time).total_seconds() <= 86400:
                 continue
@@ -375,7 +399,7 @@ def collect_server_data(server):
             client.close()
 
 
-CONFIG_FIELDS = ("hostname", "ip_address", "ssh_port", "ssh_user", "group_name")
+CONFIG_FIELDS = ("hostname", "ip_address", "ssh_port", "ssh_user", "group_name", "collection_mode")
 
 
 def _do_monitor_server(server_id):
@@ -383,7 +407,7 @@ def _do_monitor_server(server_id):
     started = time.monotonic()
     try:
         with SessionLocal() as db:
-            row = db.query(Server).filter(Server.id == server_id, Server.is_active == True).first()
+            row = db.query(Server).filter(Server.id == server_id, Server.is_active == True, Server.collection_mode == 'ssh').first()
             if row is None:
                 return
             config = {key: getattr(row, key) for key in CONFIG_FIELDS}
@@ -436,7 +460,7 @@ def submit_server(server_id):
 
 def monitor_all_servers():
     with SessionLocal() as db:
-        ids = [sid for (sid,) in db.query(Server.id).filter(Server.is_active == True).all()]
+        ids = [sid for (sid,) in db.query(Server.id).filter(Server.is_active == True, Server.collection_mode == 'ssh').all()]
     for sid in ids:
         submit_server(sid)
 
@@ -450,22 +474,29 @@ def flush_stats_to_db():
     """触发器（每 10 分钟）：把每台机器的实时缓存快照写入历史表"""
     db = SessionLocal()
     try:
-        servers = db.query(Server).filter(Server.is_active == True).all()  # noqa: E712
+        servers = db.query(Server).filter(Server.is_active == True).order_by(Server.id).all()  # noqa: E712
         now = datetime.utcnow()
         for server in servers:
+            # Serialize against reports so history dedup survives concurrent requests.
+            db.refresh(server, with_for_update=True)
             data = server.latest_status_data or {}
             effective_status, _ = freshness(server, now)
             valid = effective_status == "online"
+            credential = db.get(AgentCredential, server.id) if server.collection_mode == 'agent' else None
+            if credential and valid and credential.last_history_report_id == data.get('report_id'):
+                continue
+            if credential and valid:
+                credential.last_history_report_id = data.get('report_id')
             db.add(ServerStats(
                 server_id=server.id,
-                timestamp=now,
+                timestamp=(collection_time(data) if server.collection_mode == 'agent' and valid else now),
                 status=effective_status,
-                uptime_seconds=data.get("uptime_seconds", 0) if valid else None,
-                cpu_percent=data.get("cpu_percent", 0) if valid else None,
-                cpu_cores=data.get("cpu_cores", 1) if valid else None,
-                ram_total_mb=data.get("ram_total_mb", 0) if valid else None,
-                ram_used_mb=data.get("ram_used_mb", 0) if valid else None,
-                ram_percent=data.get("ram_percent", 0) if valid else None,
+                uptime_seconds=data.get("uptime_seconds", 0) if valid else null(),
+                cpu_percent=data.get("cpu_percent", 0) if valid else null(),
+                cpu_cores=data.get("cpu_cores", 1) if valid else null(),
+                ram_total_mb=data.get("ram_total_mb", 0) if valid else null(),
+                ram_used_mb=data.get("ram_used_mb", 0) if valid else null(),
+                ram_percent=data.get("ram_percent", 0) if valid else null(),
                 gpu_data=data.get("gpu_data", []) if valid else None,
             ))
         db.commit()

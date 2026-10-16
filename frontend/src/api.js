@@ -12,7 +12,7 @@
 import axios from 'axios'
 
 const http = axios.create({
-  baseURL: `http://${window.location.hostname}:7980`,
+  baseURL: window.location.protocol === 'https:' ? window.location.origin : `http://${window.location.hostname}:7980`,
   timeout: 15000,
 })
 

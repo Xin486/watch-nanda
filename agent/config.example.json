@@ -1,0 +1,7 @@
+{
+  "url": "https://monitor.example.com/api/agent/report",
+  "server_id": 1,
+  "token": "REPLACE_WITH_THE_NODE_SPECIFIC_TOKEN",
+  "interval_seconds": 300,
+  "jitter_seconds": 15
+}

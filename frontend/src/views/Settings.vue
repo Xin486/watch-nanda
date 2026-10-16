@@ -20,6 +20,7 @@
       <div class="panel" @input="alertDirty = true" @change="alertDirty = true">
         <h2>⚠️ 告警规则配置</h2>
         <p class="desc">设置触发告警的安全阈值，避免因瞬间网络抖动造成的误报。</p>
+        <p class="desc">主动上报节点默认每5分钟上报，12分钟标记数据过期，失联告警至少等待16分钟；此处填写更长时间时以更长时间为准。</p>
         
         <div class="form-group row-group">
           <label class="toggle-label">

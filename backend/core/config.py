@@ -25,6 +25,8 @@ if load_dotenv:
 class Settings:
     PROJECT_NAME: str = "Node Monitor Platform"
     STALE_AFTER_SECONDS: int = max(60, int(os.getenv("STALE_AFTER_SECONDS", "180")))
+    AGENT_STALE_SECONDS: int = max(600, int(os.getenv("AGENT_STALE_SECONDS", "720")))
+    AGENT_OFFLINE_SECONDS: int = max(AGENT_STALE_SECONDS + 60, int(os.getenv("AGENT_OFFLINE_SECONDS", "960")))
 
     # ---- 数据库连接（部署时修改 backend/.env 即可）----
     DB_HOST = os.getenv("DB_HOST", "127.0.0.1")   # 数据库主机（本机填 127.0.0.1）

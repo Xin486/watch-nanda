@@ -15,6 +15,7 @@ class Server(Base):
     ip_address = Column(String(50), nullable=True)
     ssh_port = Column(Integer, default=22)
     ssh_user = Column(String(50), default="root")
+    collection_mode = Column(String(10), nullable=False, default="ssh", server_default="ssh")
     group_name = Column(String(50), default="未分组")
     is_active = Column(Boolean, default=True)
 
@@ -49,6 +50,14 @@ class ServerStats(Base):
 
     # 解析好的 GPU 数组（型号、温度、显存）
     gpu_data = Column(JSON, nullable=True)
+
+
+class AgentCredential(Base):
+    """Only a SHA-256 token digest is stored; provisioning is a local admin CLI."""
+    __tablename__ = "agent_credentials"
+    server_id = Column(Integer, primary_key=True)
+    token_hash = Column(String(64), nullable=False)
+    last_history_report_id = Column(String(36), nullable=True)
 
 
 class EmailConfig(Base):

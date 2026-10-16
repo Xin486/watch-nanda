@@ -126,8 +126,10 @@
                   <option v-for="g in availableGroups" :key="g" :value="g"></option>
                 </datalist>
               </div>
-              <div class="form-item"><label>SSH 用户名</label><input type="text" v-model="editForm.ssh_user"></div>
-              <div class="form-item"><label>SSH 端口</label><input type="number" v-model="editForm.ssh_port"></div>
+              <div class="form-item"><label>采集方式</label><select v-model="editForm.collection_mode"><option value="agent">节点主动上报（每5分钟）</option><option value="ssh">SSH 采集</option></select></div>
+              <div class="form-item" v-if="editForm.collection_mode === 'agent'"><label>节点 ID：{{ editForm.id }}</label><span>切换后请在监控服务器签发节点 Token；原 Token 在切换模式后失效。</span></div>
+              <div class="form-item" v-if="editForm.collection_mode === 'ssh'"><label>SSH 用户名</label><input type="text" v-model="editForm.ssh_user"></div>
+              <div class="form-item" v-if="editForm.collection_mode === 'ssh'"><label>SSH 端口</label><input type="number" v-model="editForm.ssh_port"></div>
             </div>
             <div class="modal-actions">
               <button class="btn-cancel" @click="showEditModal = false">取消</button>
@@ -204,6 +206,7 @@ const openEditModal = (server) => {
     group_name: server.group_name,
     ssh_user: server.ssh_user || 'root', 
     ssh_port: server.ssh_port || 22, 
+    collection_mode: server.collection_mode || 'ssh',
 
   }
   showEditModal.value = true

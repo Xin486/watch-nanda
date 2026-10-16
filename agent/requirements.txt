@@ -1,0 +1,2 @@
+# Official NVIDIA NVML bindings; install into the agent's dedicated virtualenv.
+nvidia-ml-py>=12,<14

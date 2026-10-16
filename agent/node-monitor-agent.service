@@ -1,0 +1,29 @@
+[Unit]
+Description=Node Monitor metrics reporting agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=node-monitor
+Group=node-monitor
+ExecStart=/opt/node-monitor-agent/venv/bin/python /opt/node-monitor-agent/monitor_agent.py --config /etc/node-monitor-agent/config.json
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+CPUQuota=10%
+MemoryMax=192M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

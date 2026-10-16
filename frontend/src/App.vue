@@ -89,10 +89,10 @@ const addNewGroup = () => {
 }
 
 const openAddServerModal = () => { showAddModal.value = true }
-const onServerCreated = () => {
+const onServerCreated = (node) => {
   showAddModal.value = false
   window.dispatchEvent(new CustomEvent('servers-refresh'))
-  addNotice.value = '服务器已添加，正在等待首次采集。'
+  addNotice.value = node?.collection_mode === 'agent' ? `节点 #${node.server_id} 已添加。请签发专属 Token 并安装节点采集服务。` : '服务器已添加，正在等待首次采集。'
   clearTimeout(noticeTimer)
   noticeTimer = setTimeout(() => { addNotice.value = '' }, 5000)
 }

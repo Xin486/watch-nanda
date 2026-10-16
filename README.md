@@ -1,5 +1,8 @@
 # Node Monitor 服务器监控平台
 
+支持节点主动通过 HTTPS 上报，无需 SSH 免密密钥。新节点默认每 5 分钟上报、每 10 分钟保存历史；已有节点继续 SSH 采集，可逐台迁移。
+已有数据库升级前必须执行 `backend/migrate_agent.py`。详细接入、Token 签发和回退步骤见 [Agent 接入说明](agent/README.md)。
+
 通过 SSH 免密登录采集集群中每台服务器的 CPU / 内存 / GPU 数据，
 提供控制台卡片、算力大屏、历史曲线与离线邮件告警。
 
@@ -15,7 +18,7 @@
 
 ### 方式一：一键初始化（推荐）
 
-要求机器已安装 Docker、Python 3.9~3.12、Node.js 18+，然后：
+要求机器已安装 Docker、Python 3.10~3.12、Node.js 18+，然后：
 
 ```bash
 bash setup.sh    # 自动：生成 .env → Docker 拉起 MySQL → 建库导表 → 安装前后端依赖

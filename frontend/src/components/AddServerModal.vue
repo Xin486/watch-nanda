@@ -19,7 +19,10 @@
           </div>
         </section>
 
-        <section class="add-node-connection" aria-labelledby="node-ssh-heading">
+        <section class="add-node-connection">
+          <div class="add-node-field"><label for="add-mode">采集方式</label><select id="add-mode" v-model="form.collection_mode" :disabled="saving"><option value="agent">节点主动上报（推荐，每5分钟）</option><option value="ssh">SSH 采集（兼容已有节点）</option></select></div>
+        </section>
+        <section v-if="form.collection_mode === 'ssh'" class="add-node-connection" aria-labelledby="node-ssh-heading">
           <div class="add-node-section-heading"><h3 id="node-ssh-heading">SSH 连接</h3><span>用于采集监控数据</span></div>
           <div class="add-node-grid add-node-ssh-grid">
             <div class="add-node-field"><label for="add-ssh-user">用户名</label><input id="add-ssh-user" v-model="form.ssh_user" required maxlength="50" spellcheck="false" autocomplete="off" :disabled="saving"></div>
@@ -27,7 +30,7 @@
           </div>
         </section>
 
-        <div class="add-node-tip"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="7.3"/><path d="M10 9v5M10 6h.01" stroke-linecap="round"/></svg><div><strong>连接前准备</strong><p>请先配置监控平台到目标服务器的免密 SSH 登录。添加后，平台将在一分钟内尝试采集。</p></div></div>
+        <div class="add-node-tip"><div><strong>接入准备</strong><p v-if="form.collection_mode === 'agent'">添加后，在监控服务器签发此节点专属 Token，并在节点安装采集服务。无需配置 SSH 免密登录。</p><p v-else>请先配置监控平台到目标服务器的免密 SSH 登录。添加后，平台将在一分钟内尝试采集。</p></div></div>
         <p v-if="errorMessage" class="add-node-error" role="alert">{{ errorMessage }}</p>
       </div>
 
@@ -45,11 +48,11 @@ const emit = defineEmits(['close', 'created'])
 const dialog = ref(null)
 const saving = ref(false)
 const errorMessage = ref('')
-const form = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22 })
+const form = ref({ hostname: '', ip_address: '', group_name: '', ssh_user: 'root', ssh_port: 22, collection_mode: 'agent' })
 
 const closeModal = () => { if (!saving.value) emit('close') }
 const trapFocus = event => {
-  const controls = [...dialog.value.querySelectorAll('button:not(:disabled), input:not(:disabled)')]
+  const controls = [...dialog.value.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled)')]
   const first = controls[0], last = controls[controls.length - 1]
   if (!first) { event.preventDefault(); return }
   if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.value)) {
@@ -69,12 +72,13 @@ const submit = async () => {
     hostname: form.value.hostname.trim(), ip_address: form.value.ip_address.trim(),
     group_name: form.value.group_name.trim() || '未分组',
     ssh_user: form.value.ssh_user.trim(), ssh_port: Number(form.value.ssh_port),
+    collection_mode: form.value.collection_mode,
   }
-  if (!payload.hostname || !payload.ip_address || !payload.ssh_user) {
+  if (!payload.hostname || !payload.ip_address || (payload.collection_mode === 'ssh' && !payload.ssh_user)) {
     errorMessage.value = '请填写主机名、IP 地址和 SSH 用户名。'
     return
   }
-  if (!Number.isInteger(payload.ssh_port) || payload.ssh_port < 1 || payload.ssh_port > 65535) {
+  if (payload.collection_mode === 'ssh' && (!Number.isInteger(payload.ssh_port) || payload.ssh_port < 1 || payload.ssh_port > 65535)) {
     errorMessage.value = 'SSH 端口应为 1–65535 之间的整数。'
     return
   }
@@ -83,7 +87,7 @@ const submit = async () => {
   try {
     const { data } = await api.addServer(payload)
     if (!data.success) throw new Error('创建未成功')
-    emit('created')
+    emit('created', { server_id: data.server_id, collection_mode: payload.collection_mode })
   } catch {
     errorMessage.value = '添加失败，请检查网络或连接信息后重试。已保留当前输入。'
   } finally { saving.value = false }
@@ -119,6 +123,7 @@ onBeforeUnmount(() => dialog.value?.close())
 .add-node-field input:hover { border-color: #a9bbd1; }
 .add-node-field input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px #3b82f61a; }
 .add-node-field input:disabled { background: #f8fafc; color: #64748b; }
+.add-node-field select { height: 42px; border: 1px solid #d8e1ed; border-radius: 8px; padding: 8px; background: white; font: inherit; }
 .add-node-field small { font-size: 11px; line-height: 1.4; color: #94a3b8; }
 .add-node-full { grid-column: 1 / -1; }
 .add-node-connection { border-top: 1px solid #edf1f6; margin-top: 24px; padding-top: 22px; }

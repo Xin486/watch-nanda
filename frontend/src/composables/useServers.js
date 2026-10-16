@@ -5,7 +5,7 @@ import { freshServer } from '../utils/serverStatus'
 const rawServers = ref([])
 const elapsed = ref(0)
 const servers = computed(() => rawServers.value.map(s => freshServer(s, elapsed.value)))
-const BASE = `http://${window.location.hostname}:7980`
+const BASE = window.location.protocol === 'https:' ? window.location.origin : `http://${window.location.hostname}:7980`
 let source = null, subscribers = 0, timer = null, fallbackTimer = null
 let controller = null, receivedAt = 0, lastEventAt = 0, generation = 0, revision = 0
 

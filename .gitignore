@@ -19,6 +19,13 @@ env/
 nohup.out
 celerybeat-schedule
 
+# Agent 节点凭据（签发后仅交给对应节点）
+agent-*.json
+agent/config.json
+
+# 本地隔离验证依赖
+.tmp-backend-test-deps/
+
 # 编辑器及系统文件
 .vscode/
 .idea/

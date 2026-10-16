@@ -54,6 +54,7 @@ create table servers
     ip_address         varchar(50)                            null,
     ssh_port           int          default 22                null,
     ssh_user           varchar(50)  default 'root'            null,
+    collection_mode    varchar(10)  default 'ssh'             not null,
     group_name         varchar(50)  default '未分组'          null,
     is_active          tinyint(1)   default 1                 null,
     status             varchar(20)  default 'offline'         null,
@@ -69,4 +70,11 @@ create table servers
 
 create index ix_servers_hostname
     on servers (hostname);
+
+create table agent_credentials
+(
+    server_id int primary key,
+    token_hash varchar(64) not null,
+    last_history_report_id varchar(36) null
+);
 
