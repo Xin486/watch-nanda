@@ -36,7 +36,7 @@
         <router-link to="/history" class="menu-item" active-class="active">
           <i class="icon">📈</i> 历史负载
         </router-link>
-        <router-link to="/agents" class="menu-item" active-class="active"><i class="icon">⌘</i> Agent 部署</router-link>
+        <router-link to="/operations" class="menu-item" :class="{ active: $route.path === '/operations' || $route.path.endsWith('/operations') }"><i class="icon">⌘</i> 运维命令行</router-link>
         <router-link to="/settings" class="menu-item" active-class="active">
           <i class="icon">⚙️</i> 设置
         </router-link>
@@ -59,11 +59,12 @@
 <script setup>
 // 全局外壳组件：左侧导航栏 + 路由出口 + 新增服务器弹窗
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AddServerModal from './components/AddServerModal.vue'
 import { useServers } from './composables/useServers'
 
 const route = useRoute()
+const router = useRouter()
 const { servers, subscribe } = useServers()
 const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
 const customGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
@@ -93,7 +94,8 @@ const openAddServerModal = () => { showAddModal.value = true }
 const onServerCreated = (node) => {
   showAddModal.value = false
   window.dispatchEvent(new CustomEvent('servers-refresh'))
-  addNotice.value = node?.collection_mode === 'agent' ? `节点 #${node.server_id} 已添加。请签发专属 Token 并安装节点采集服务。` : '服务器已添加，正在等待首次采集。'
+  addNotice.value = node?.collection_mode === 'agent' ? `节点 #${node.server_id} 已添加，请在部署页面完成 Agent 安装。` : '服务器已添加，正在等待首次采集。'
+  if (node?.collection_mode === 'agent' && node.server_id) router.push(`/servers/new/${node.server_id}/agent`)
   clearTimeout(noticeTimer)
   noticeTimer = setTimeout(() => { addNotice.value = '' }, 5000)
 }

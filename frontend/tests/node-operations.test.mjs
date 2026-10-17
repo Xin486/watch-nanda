@@ -1,0 +1,174 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import vm from 'node:vm'
+import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
+
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+function accessHarness({ protocol = 'https:', action, saved = true, selectable = true, api = {} } = {}) {
+  const route = reactive({ params: { id: '7' }, query: action ? { action } : {} })
+  const servers = ref([{ id: 7, hostname: 'test-node', ssh_user: 'test', has_ssh_password: saved }])
+  const mounts = [], unmounts = [], redirects = [], calls = []
+  const context = {
+    computed, reactive, ref, watch, location: { protocol },
+    onMounted: fn => mounts.push(fn), onBeforeUnmount: fn => unmounts.push(fn),
+    useRoute: () => route, useRouter: () => ({ replace: target => redirects.push(target) }),
+    useServers: () => ({ servers, subscribe() {} }),
+    window: { dispatchEvent() {} }, CustomEvent: class {},
+    api: {
+      opsSession: async () => ({}), opsLogin: async () => ({}), opsLogout: async () => ({}),
+      sshTest: async (id, payload) => { calls.push({ id, payload }); return { data: { ok: true, message: 'ok' } } },
+      trustHost: async () => ({}), ...api,
+    },
+  }
+  vm.createContext(context)
+  const code = fs.readFileSync(new URL('../src/composables/useNodeAccess.js', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace('export function ', 'function ')
+  vm.runInContext(code + '\nthis.create = useNodeAccess', context)
+  const scope = effectScope()
+  const access = scope.run(() => context.create({ selectable }))
+  return { access, route, servers, calls, redirects, mount: () => mounts[0](), cleanup: () => { unmounts.forEach(fn => fn()); scope.stop() } }
+}
+
+test('existing-node SSH action checks saved credentials once without starting a deployment', async () => {
+  const h = accessHarness({ action: 'check' })
+  try {
+    await h.mount()
+    await nextTick()
+    assert.equal(h.access.authenticated, true)
+    assert.equal(h.calls.length, 1)
+    assert.equal(h.calls[0].id, 7)
+    assert.equal(h.calls[0].payload.use_saved, true)
+    h.servers.value = [{ ...h.servers.value[0], cpu_percent: 12 }]
+    await nextTick()
+    assert.equal(h.calls.length, 1)
+  } finally { h.cleanup() }
+})
+
+test('missing saved password requires manual credentials; temporary password clears on logout', async () => {
+  const h = accessHarness({ action: 'check', saved: false })
+  try {
+    await h.mount()
+    assert.equal(h.calls.length, 0)
+    assert.equal(await h.access.testConnection(), false)
+    h.access.credentials.username = 'operator'
+    h.access.credentials.password = 'temporary-test-only'
+    await nextTick()
+    assert.equal(await h.access.testConnection(), true)
+    assert.equal(h.calls[0].payload.use_saved, false)
+    assert.equal(h.calls[0].payload.save_credentials, false)
+    assert.equal(h.calls[0].payload.username, 'operator')
+    await h.access.logout()
+    assert.equal(h.access.authenticated, false)
+    assert.equal(h.access.credentials.password, '')
+  } finally { h.cleanup() }
+})
+
+test('late SSH result cannot restore credentials or results after logout', async () => {
+  const request = deferred()
+  const h = accessHarness({ api: { sshTest: () => request.promise } })
+  try {
+    await h.mount()
+    const pending = h.access.testConnection()
+    await h.access.logout()
+    request.resolve({ data: { ok: true, message: 'late result' } })
+    assert.equal(await pending, false)
+    assert.equal(h.access.check, null)
+    assert.equal(h.access.testing, false)
+  } finally { h.cleanup() }
+})
+
+test('late session response cannot sign the page back in after logout', async () => {
+  const request = deferred()
+  const h = accessHarness({ api: { opsSession: () => request.promise } })
+  try {
+    const mounting = h.mount()
+    await h.access.logout()
+    request.resolve({})
+    await mounting
+    assert.equal(h.access.authenticated, false)
+  } finally { h.cleanup() }
+})
+
+test('changing an operations node clears manual secrets and targets the operations route', async () => {
+  const h = accessHarness({ saved: false })
+  try {
+    await h.mount()
+    h.access.credentials.password = 'temporary-test-only'
+    h.servers.value.push({ id: 8, hostname: 'other', ssh_user: 'manager', has_ssh_password: true })
+    h.access.selectedId = '8'
+    await nextTick()
+    assert.equal(h.access.credentials.password, '')
+    assert.equal(h.access.credentials.username, 'manager')
+    assert.equal(h.redirects.at(-1), '/nodes/8/operations')
+  } finally { h.cleanup() }
+})
+
+test('new-server deployment access keeps its target and HTTP cannot authenticate or test SSH', async () => {
+  let logins = 0, sessions = 0
+  const h = accessHarness({ protocol: 'http:', selectable: false, api: { opsLogin: async () => logins++, opsSession: async () => sessions++ } })
+  try {
+    await h.mount()
+    await h.access.login()
+    assert.equal(await h.access.testConnection(), false)
+    h.access.selectedId = '8'
+    await nextTick()
+    assert.equal(h.redirects.length, 0)
+    assert.equal(logins, 0)
+    assert.equal(sessions, 0)
+    assert.equal(h.calls.length, 0)
+  } finally { h.cleanup() }
+})
+
+test('new Agent node opens deployment, while adding an SSH node keeps the current page', () => {
+  const targets = []
+  const context = {
+    computed, ref, watch: () => {}, onMounted: () => {}, onUnmounted: () => {},
+    useRoute: () => ({ path: '/dashboard' }), useRouter: () => ({ push: path => targets.push(path) }),
+    useServers: () => ({ servers: ref([]), subscribe() {} }),
+    localStorage: { getItem: () => null }, window: { dispatchEvent() {} }, CustomEvent: class {},
+    setTimeout: () => 1, clearTimeout() {},
+  }
+  vm.createContext(context)
+  const source = fs.readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  vm.runInContext(source + '\nthis.created = onServerCreated', context)
+  context.created({ server_id: 71, collection_mode: 'agent' })
+  context.created({ server_id: 72, collection_mode: 'ssh' })
+  assert.deepEqual(targets, ['/servers/new/71/agent'])
+})
+
+test('new-node deployment checks SSH before submitting one job and resumes its logs', async () => {
+  const calls = [], timers = [], unmounts = []
+  const access = reactive({ authenticated: true, node: { id: 71, ip_address: '192.168.1.71' },
+    credentials: { password: 'temporary-test-only' }, busy: false,
+    validInput: () => true, testConnection: async () => { calls.push('ssh'); return true },
+    payload: () => ({ use_saved: true }), handleError: e => { throw e },
+  })
+  const context = {
+    computed, ref, watch, onBeforeUnmount: fn => unmounts.push(fn),
+    useNodeAccess: () => access,
+    setInterval: fn => { timers.push(fn); return fn }, clearInterval() {},
+    window: { dispatchEvent() {} }, CustomEvent: class {},
+    api: {
+      deploymentJobs: async id => { assert.equal(id, 71); return { data: [] } },
+      deployAgent: async (id, payload) => { calls.push('deploy'); assert.equal(id, 71); assert.equal(payload.use_saved, true); return { data: { id: 'job-71', status: 'running', logs: [] } } },
+      deploymentJob: async id => { assert.equal(id, 'job-71'); return { data: { id, status: 'success', logs: ['Agent ready'] } } },
+    },
+  }
+  vm.createContext(context)
+  const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  const scope = effectScope()
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,pollJob}', context))
+  try {
+    await nextTick()
+    await context.exposed.deploy()
+    assert.deepEqual(calls, ['ssh', 'deploy'])
+    assert.equal(access.credentials.password, '')
+    assert.equal(context.exposed.job.value.status, 'running')
+    assert.equal(timers.length, 1)
+    await context.exposed.pollJob()
+    assert.equal(context.exposed.job.value.status, 'success')
+    assert.equal(context.exposed.job.value.logs[0], 'Agent ready')
+    await context.exposed.deploy()
+    assert.equal(calls.length, 2)
+  } finally { unmounts.forEach(fn => fn()); scope.stop() }
+})

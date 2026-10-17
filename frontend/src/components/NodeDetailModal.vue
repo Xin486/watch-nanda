@@ -10,15 +10,15 @@
       <div class="detail-metrics" v-if="node.status === 'online'">
         <article v-for="metric in metrics" :key="metric.label" class="summary-metric"><span>{{ metric.label }}</span><strong>{{ metric.value }}<small>{{ metric.unit }}</small></strong><p>{{ metric.note }}</p><div class="metric-track"><i :style="{ width: `${metric.percent}%`, background: metric.color }"/></div></article>
       </div>
-      <div v-else class="unavailable"><strong>{{ statusLabel(node.status) }}</strong><p>{{ node.error_message || '等待新的监控数据。可以通过 SSH 检测检查连接，或进入 Agent 部署页面。' }}</p></div>
+      <div v-else class="unavailable"><strong>{{ statusLabel(node.status) }}</strong><p>{{ node.error_message || '等待新的监控数据。可以测试 SSH 连接，或进入运维命令行检查节点。' }}</p></div>
       <div class="process-summary" v-if="node.status === 'online'"><span class="eyebrow">CPU 占用最高的进程</span><p>{{ node.top_process || '暂无进程数据' }}</p><small>进程 CPU 按单核 100% 计算，多线程进程可能超过 100%。</small></div>
       <section class="gpu-section" v-if="node.status === 'online'"><div class="section-caption"><h3>显卡详情</h3><span>{{ node.gpu_data?.length || 0 }} 张 GPU</span></div><div class="gpu-table-wrap" v-if="node.gpu_data?.length"><table><thead><tr><th>设备 / 型号</th><th>显存</th><th>计算占用</th><th>温度</th><th>功率</th></tr></thead><tbody><tr v-for="(gpu, i) in node.gpu_data" :key="gpu.uuid || i"><td><small>GPU {{ i }}</small><strong>{{ gpu.model }}</strong></td><td><span>{{ gpu.memory_used }} / {{ gpu.memory_total }}</span><div class="gpu-memory"><i :style="{ width: `${gpu.memory_percent}%` }"/></div></td><td>{{ gpu.gpu_util_percent == null ? '—' : `${gpu.gpu_util_percent}%` }}</td><td :class="{ hot: parseFloat(gpu.temp) > 80 }">{{ Number.isFinite(parseFloat(gpu.temp)) ? `${parseFloat(gpu.temp)} °C` : '—' }}</td><td>{{ gpu.power_draw == null ? '—' : `${Math.round(gpu.power_draw)} W` }}</td></tr></tbody></table></div><p v-else class="muted">当前没有 NVIDIA 显卡数据。</p></section>
-      <footer class="detail-actions"><router-link :to="`/history?server_id=${node.id}`" @click="close">查看历史负载 ↗</router-link><div><button class="secondary-action" @click="goOps('check')">检测 SSH</button><button class="primary-action" @click="goOps()">部署 Agent ↗</button></div></footer>
+      <footer class="detail-actions"><router-link :to="`/history?server_id=${node.id}`" @click="close">查看历史负载 ↗</router-link><div><button class="secondary-action" @click="goOps('check')">测试 SSH</button><button class="primary-action" @click="goOps('terminal')">进入运维命令行 ↗</button></div></footer>
     </section>
     <form v-else class="detail-body settings-body" @submit.prevent="save">
       <p class="form-description">修改节点连接与采集方式。邮件提醒可通过标题旁的小铃铛单独控制。</p>
       <div class="settings-grid"><label>节点名称<input v-model="form.hostname" required maxlength="100"></label><label>IP 地址<input v-model="form.ip_address" required maxlength="50"></label><label>所属分组<input v-model="form.group_name" list="detail-groups"><datalist id="detail-groups"><option v-for="group in groups" :key="group" :value="group"/></datalist></label><label>采集方式<select v-model="form.collection_mode"><option value="agent">Agent 主动上报 · 每 5 分钟</option><option value="ssh">SSH 用户名密码采集</option></select></label><template v-if="form.collection_mode === 'ssh'"><label>SSH 用户名<input v-model="form.ssh_user" required maxlength="50" autocomplete="off"></label><label>SSH 端口<input v-model.number="form.ssh_port" type="number" min="1" max="65535" required></label><label class="full-field">SSH 密码<input v-model="form.ssh_password" type="password" autocomplete="new-password" :placeholder="node.has_ssh_password ? '已配置，留空保留原密码' : '输入 SSH 密码'"><small>密码通过 HTTPS 提交并加密保存。修改连接地址、端口或用户名时需重新输入。</small></label></template></div>
-      <p v-if="form.collection_mode === 'agent'" class="config-note">若节点尚未安装 Agent，请从部署页面完成检查与安装，再切换采集方式。</p><p v-if="error" class="detail-error" role="alert">{{ error }}</p>
+      <p v-if="form.collection_mode === 'agent'" class="config-note">切换采集方式不会自动安装 Agent，请先确认节点采集服务已正常运行。</p><p v-if="error" class="detail-error" role="alert">{{ error }}</p>
       <footer class="detail-actions"><button type="button" class="secondary-action" @click="close">取消</button><button class="primary-action" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存配置' }}</button></footer>
     </form>
   </dialog>
@@ -48,7 +48,7 @@ const metrics = computed(() => {
 })
 function close() { form.value.ssh_password = ''; emit('close') }
 function backdrop(event) { if (event.target === dialog.value) { const r = dialog.value.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) close() } }
-function goOps(action) { router.push({ path:`/nodes/${props.serverId}/agent`,query:action ? {action} : {} }); close() }
+function goOps(action) { router.push({ path:`/nodes/${props.serverId}/operations`,query:action ? {action} : {} }); close() }
 async function save() {
   error.value = ''
   if (form.value.ssh_password && location.protocol !== 'https:') { error.value = '请使用 HTTPS 页面提交密码。'; return }

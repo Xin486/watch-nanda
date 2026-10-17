@@ -31,11 +31,11 @@
           </div>
         </section>
 
-        <div class="add-node-tip"><div><strong>接入准备</strong><p v-if="form.collection_mode === 'agent'">添加后，在监控服务器签发此节点专属 Token，并在节点安装采集服务。无需配置 SSH 免密登录。</p><p v-else>请输入目标服务器的用户名和密码，并由管理员核验 SSH 主机指纹。请使用 HTTPS 页面添加密码。</p></div></div>
+        <div class="add-node-tip"><div><strong>接入准备</strong><p v-if="form.collection_mode === 'agent'">添加后进入此新节点的独立部署页，使用用户名和密码一键安装 Agent。无需配置 SSH 免密登录。</p><p v-else>请输入目标服务器的用户名和密码，并由管理员核验 SSH 主机指纹。请使用 HTTPS 页面添加密码。</p></div></div>
         <p v-if="errorMessage" class="add-node-error" role="alert">{{ errorMessage }}</p>
       </div>
 
-      <footer class="add-node-footer"><span class="add-node-footer-hint">添加后可随时编辑节点配置</span><div class="add-node-buttons"><button type="button" class="add-node-cancel" :disabled="saving" @click="closeModal">取消</button><button type="submit" class="add-node-submit" :disabled="saving"><span v-if="saving" class="add-node-spinner" aria-hidden="true"/><span v-else aria-hidden="true" class="add-node-plus">＋</span>{{ saving ? '正在添加…' : '添加服务器' }}</button></div></footer>
+      <footer class="add-node-footer"><span class="add-node-footer-hint">{{ form.collection_mode === 'agent' ? '下一步：部署此节点的 Agent' : '添加后可随时编辑节点配置' }}</span><div class="add-node-buttons"><button type="button" class="add-node-cancel" :disabled="saving" @click="closeModal">取消</button><button type="submit" class="add-node-submit" :disabled="saving"><span v-if="saving" class="add-node-spinner" aria-hidden="true"/><span v-else aria-hidden="true" class="add-node-plus">＋</span>{{ saving ? '正在添加…' : form.collection_mode === 'agent' ? '添加并部署 Agent' : '添加服务器' }}</button></div></footer>
     </form>
   </dialog>
 </template>

@@ -1,0 +1,103 @@
+.operations-page{max-width:1500px;margin:auto;padding:30px 34px 50px;color:#0f172a}
+.operations-page .operations-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}
+.operations-page .back-link{font-size:12px;color:#64748b;text-decoration:none}
+.operations-page .operations-heading h1{font-size:25px;letter-spacing:-.6px;margin:14px 0 8px}
+.operations-page .operations-heading p{font-size:13px;color:#94a3b8;margin:0}
+.operations-page .quiet-button{border:1px solid #dbe3ee;background:#fff;padding:9px 13px;border-radius:8px;color:#64748b;font-size:12px;cursor:pointer}
+.operations-page .node-selector{display:flex;align-items:center;gap:14px;border:1px solid #e3eaf2;border-radius:12px;background:white;padding:14px 20px;margin-bottom:20px}
+.operations-page .node-selector label{font-size:12px;color:#64748b;white-space:nowrap}
+.operations-page .node-selector select{flex:1;max-width:560px;border:0;outline:none;background:white;color:#334155;font-size:13px;min-width:0;padding:5px}
+.operations-page .node-status{font-size:12px;white-space:nowrap}
+.operations-page .operations-grid{display:grid;grid-template-columns:315px minmax(0,1fr);gap:20px;align-items:start}
+.operations-page .connection-panel,.operations-page .deployment-panel{background:#fff;border:1px solid #e3eaf2;border-radius:15px;padding:22px}
+.operations-page .panel-caption{display:flex;gap:12px;align-items:center}
+.operations-page .step-number{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#eff6ff;color:#2563eb;font-size:11px;font-weight:700;flex-shrink:0}
+.operations-page .panel-caption h2{margin:0;font-size:15px;letter-spacing:-.2px}
+.operations-page .panel-caption p{font-size:11px;color:#94a3b8;margin:5px 0 0}
+.operations-page .mode-chip{margin-left:auto;font-size:10px;padding:4px 7px;border-radius:5px;color:#64748b;background:#f1f5f9}
+.operations-page .connection-address{display:flex;flex-direction:column;gap:8px;background:#f8fafc;border:1px solid #edf2f7;border-radius:8px;padding:13px;margin:22px 0 18px}
+.operations-page .connection-address span{font-size:10px;color:#94a3b8}
+.operations-page .connection-address code{font-size:12px;color:#475569;overflow-wrap:anywhere}
+.operations-page .credential-switch{display:flex;border:1px solid #e2e8f0;border-radius:8px;padding:3px;gap:3px;background:#f8fafc}
+.operations-page .credential-switch button{flex:1;padding:8px 5px;font-size:11px;border:0;border-radius:5px;background:transparent;color:#94a3b8;cursor:pointer}
+.operations-page .credential-switch button.selected{color:#2563eb;background:#fff;box-shadow:0 1px 4px #0f172a10}
+.operations-page .manual-credentials{display:grid;gap:16px;margin:20px 0}
+.operations-page .manual-credentials>label{display:flex;flex-direction:column;gap:8px;font-size:12px;color:#64748b}
+.operations-page .manual-credentials input:not([type=checkbox]),.operations-page .operator-login input{height:40px;padding:10px 12px;border:1px solid #dbe3ee;border-radius:8px;font-size:13px;outline:none;width:100%;box-sizing:border-box}
+.operations-page .manual-credentials input:focus,.operations-page .operator-login input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px #dbeafe70}
+.operations-page .manual-credentials .save-checkbox{flex-direction:row;align-items:flex-start;line-height:1.7;font-size:10px}
+.operations-page .save-checkbox input,.operations-page .trust-checkbox input{accent-color:#2563eb;margin:3px 0 0}
+.operations-page .stored-credentials{font-size:12px;line-height:1.8;color:#475569;margin:22px 0}
+.operations-page .stored-credentials small{display:block;font-size:11px;color:#94a3b8;margin-top:6px}
+.operations-page .saved-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#10b981;margin-right:7px}
+.operations-page .test-button{display:flex;justify-content:space-between;width:100%;padding:11px 14px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;color:#2563eb;font-size:12px;font-weight:600;cursor:pointer}
+.operations-page .connection-note{font-size:10px;color:#94a3b8;line-height:1.8;margin:17px 0 0}
+.operations-page .check-result{border:1px solid #e2e8f0;background:#f8fafc;border-radius:9px;padding:13px;margin-top:16px;font-size:11px;line-height:1.7}
+.operations-page .check-result strong{font-size:12px}
+.operations-page .check-result.success{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+.operations-page .check-result.failure{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+.operations-page .check-result p{margin:5px 0}
+.operations-page .check-result code{display:block;font-size:10px;word-break:break-all;padding-top:8px}
+.operations-page .trust-checkbox{display:flex;align-items:flex-start;gap:7px;margin:12px 0}
+.operations-page .secondary-button{padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer;font-size:11px}
+.operations-page .workspace-panel{display:grid;gap:20px;min-width:0}
+.operations-page .deployment-summary{display:grid;gap:15px;background:#f8fafc;border-radius:9px;padding:17px 18px;margin-top:22px}
+.operations-page .deployment-summary>div{display:flex;gap:20px;align-items:center}
+.operations-page .deployment-summary span{font-size:11px;color:#94a3b8;min-width:55px}
+.operations-page .deployment-summary strong{font-size:12px;font-weight:500;color:#475569}
+.operations-page .deployment-summary code{font-size:11px;color:#475569;overflow-wrap:anywhere}
+.operations-page .deploy-actions{display:flex;gap:18px;justify-content:space-between;align-items:center;margin-top:20px}
+.operations-page .deploy-actions>span{font-size:11px;line-height:1.8;color:#94a3b8}
+.operations-page .primary-button{background:#2563eb;color:#fff;border:1px solid #2563eb;padding:11px 17px;border-radius:8px;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer}
+.operations-page .primary-button:hover{background:#1d4ed8}
+.operations-page .job-result{border-top:1px solid #edf2f7;margin-top:22px;padding-top:18px}
+.operations-page .job-caption{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:11px;color:#94a3b8}
+.operations-page .job-caption strong{font-size:12px;color:#2563eb}
+.operations-page .job-result.success strong{color:#059669}
+.operations-page .job-result.failed strong{color:#dc2626}
+.operations-page .deployment-log{background:#f8fafc;border:1px solid #e3eaf2;border-radius:8px;padding:13px;font:11px/1.9 ui-monospace,monospace;color:#64748b;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:0}
+.operations-page .terminal-panel{border:1px solid #202f43;border-radius:15px;background:#111b2b;overflow:hidden}
+.operations-page .terminal-heading{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:16px 20px;border-bottom:1px solid #223046;background:#162234}
+.operations-page .terminal-heading>div{display:flex;align-items:center;gap:10px}
+.operations-page .terminal-heading h2{font-size:13px;color:#dbe5f3;font-weight:500;margin:0}
+.operations-page .terminal-heading>div>span:last-child{font-size:10px;color:#62768f}
+.operations-page .terminal-indicator{width:6px;height:6px;border-radius:50%;background:#526278}
+.operations-page .terminal-indicator.connected{background:#34d399;box-shadow:0 0 9px #34d39940}
+.operations-page .terminal-button{border:1px solid #35465e;background:#1b2b41;color:#b9cce5;border-radius:7px;padding:7px 11px;font-size:11px;cursor:pointer}
+.operations-page .terminal-canvas{height:350px;padding:14px 16px 4px;box-sizing:border-box}
+.operations-page .terminal-canvas.empty{display:grid;place-items:center}
+.operations-page .terminal-placeholder{text-align:center;color:#62768f}
+.operations-page .terminal-placeholder>span{display:block;font:32px ui-monospace,monospace;color:#344a65;margin-bottom:18px}
+.operations-page .terminal-placeholder strong{font-size:12px;font-weight:500;color:#8fa3bf}
+.operations-page .terminal-placeholder p{font-size:11px;margin-top:10px}
+.operations-page .terminal-panel footer{font-size:10px;color:#536a86;padding:12px 20px;border-top:1px solid #1b2b40}
+.operations-page .operator-login{background:white;border:1px solid #e2e8f0;border-radius:18px;max-width:360px;margin:60px auto;padding:32px}
+.operations-page .login-mark{display:grid;place-items:center;width:42px;height:42px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;color:#2563eb;font-size:24px}
+.operations-page .operator-login h2{font-size:19px;margin-top:22px}
+.operations-page .operator-login p{font-size:12px;line-height:1.8;color:#94a3b8}
+.operations-page .operator-login label{display:block;font-size:12px;color:#64748b;margin:23px 0 9px}
+.operations-page .operator-login .primary-button{width:100%;margin-top:18px}
+.operations-page .operation-error{font-size:12px!important;color:#be123c!important;line-height:1.8}
+.operations-page .page-error{background:#fff1f2;border:1px solid #fecdd3;border-radius:9px;padding:12px 16px}
+.operations-page .transport-notice{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:22px;color:#92400e;font-size:13px}
+.operations-page .transport-notice a{color:#92400e}
+.operations-page .select-empty{text-align:center;padding:80px;color:#94a3b8;font-size:13px}
+.operations-page button:disabled{opacity:.5;cursor:not-allowed}
+.operations-page button:focus-visible,.operations-page a:focus-visible,.operations-page select:focus-visible{outline:3px solid #93c5fd;outline-offset:3px}@media(max-width:1100px){
+.operations-page{padding:24px}
+.operations-page .operations-grid{grid-template-columns:275px minmax(0,1fr)}
+.operations-page .connection-panel,.operations-page .deployment-panel{padding:18px}
+.operations-page .deployment-summary>div{align-items:flex-start;gap:10px}
+.operations-page .deploy-actions{flex-wrap:wrap}}@media(max-width:850px){
+.operations-page .operations-grid{grid-template-columns:1fr}
+.operations-page .operations-heading{align-items:flex-start;gap:12px}
+.operations-page .operations-heading h1{font-size:21px}
+.operations-page .node-selector{padding:12px}
+.operations-page .terminal-heading{padding:14px}
+.operations-page .terminal-canvas{height:300px}
+.operations-page{padding:20px 15px}
+.operations-page .operator-login{margin:30px auto;padding:24px}
+.operations-page .deployment-summary code{font-size:10px}}
+
+.operations-page .new-node-summary{flex-wrap:wrap;font-size:12px}.operations-page .new-node-summary strong{font-size:14px}.operations-page .new-node-label{padding:4px 8px;border-radius:5px;color:#2563eb;background:#eff6ff}.operations-page .deployment-complete{margin-top:20px;display:flex;justify-content:flex-end;gap:10px}.operations-page .deployment-complete a{font-size:12px;text-decoration:none;color:#2563eb;padding:10px 14px;border:1px solid #dbeafe;border-radius:8px}.operations-page .deployment-complete .primary-button{color:white}.operations-page .terminal-canvas{height:450px}.operations-page .deployment-note{font-size:12px;line-height:1.8;color:#64748b;margin:18px 0 0}
+@media(max-width:850px){.operations-page .terminal-canvas{height:350px}.operations-page .deployment-complete{flex-wrap:wrap}}

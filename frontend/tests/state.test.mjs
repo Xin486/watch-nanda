@@ -18,7 +18,9 @@ function setup(file, names, overrides={}) {
   const unmounts=[], intervals=[], listeners=new Map(), store=new Map()
   const context={
     ref:value=>({value}), shallowRef:value=>({value}), computed:get=>({get value(){return get()}}),
-    onMounted:()=>{}, onUnmounted:cb=>unmounts.push(cb), nextTick:async cb=>cb?.(),
+    onMounted:()=>{}, onUnmounted:cb=>unmounts.push(cb), onBeforeUnmount:cb=>unmounts.push(cb), nextTick:async cb=>cb?.(),
+    watch:()=>{}, useRoute:()=>({query:{}}), useRouter:()=>({push:()=>{}}),
+    defineProps:()=>({serverId:1}), defineEmits:()=>()=>{}, location:{protocol:'https:'},
     setInterval:(cb,ms)=>{ const task={cb,ms}; intervals.push(task); return task }, clearInterval:()=>{},
     window:{location:{hostname:'test'}, addEventListener:(name,cb)=>listeners.set(name,cb),removeEventListener:name=>listeners.delete(name),dispatchEvent:()=>{}},
     localStorage:{getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v)},
@@ -113,13 +115,13 @@ test('history ignores out-of-order responses and cancels on close',async()=>{
 
 test('node metrics update while unsaved edits remain intact; save can be repeated',async()=>{
   const servers={value:[{id:1,hostname:'before',ip_address:'127.0.0.1',cpu_percent:10,status:'online'}]};let writes=0
-  const h=setup('views/Dashboard.vue',['openEditModal','editForm','selectedServer','saveServerInfo','saving'],{
+  const h=setup('components/NodeDetailModal.vue',['node','form','save','saving'],{
     useServers:()=>({servers,subscribe:()=>{}}),useRoute:()=>({query:{}}),
     api:{updateServer:async()=>writes++},
   })
-  h.openEditModal(servers.value[0]);h.editForm.value.hostname='user-edit'
+  h.form.value={...servers.value[0],hostname:'user-edit',ssh_password:''}
   servers.value=[{...servers.value[0],cpu_percent:80}]
-  assert.equal(h.selectedServer.value.cpu_percent,80);assert.equal(h.editForm.value.hostname,'user-edit')
-  await h.saveServerInfo();assert.equal(h.saving.value,false)
-  await h.saveServerInfo();assert.equal(writes,2)
+  assert.equal(h.node.value.cpu_percent,80);assert.equal(h.form.value.hostname,'user-edit')
+  await h.save();assert.equal(h.saving.value,false)
+  await h.save();assert.equal(writes,2)
 })

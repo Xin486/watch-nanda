@@ -13,8 +13,12 @@ const routes = [
   { path: '/history', component: () => import('../views/History.vue') },
   { path: '/settings', component: () => import('../views/Settings.vue') },
   { path: '/cleanup', component: () => import('../views/Cleanup.vue') },
-  { path: '/nodes/:id/agent', component: () => import('../views/AgentDeploy.vue') },
-  { path: '/agents', component: () => import('../views/AgentDeploy.vue') },
+  { path: '/nodes/:id/operations', component: () => import('../views/NodeOperations.vue') },
+  { path: '/operations', component: () => import('../views/NodeOperations.vue') },
+  { path: '/servers/new/:id/agent', component: () => import('../views/AgentDeploy.vue') },
+  // Older operations bookmarks no longer open the deployment workflow.
+  { path: '/nodes/:id/agent', redirect: to => ({ path: `/nodes/${to.params.id}/operations`, query: to.query }) },
+  { path: '/agents', redirect: '/operations' },
 ]
 
 const router = createRouter({
