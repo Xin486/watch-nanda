@@ -108,6 +108,8 @@ bash stop.sh            # 只停止本项目，保留 MySQL 和其他项目
 
 生产环境访问：`https://192.168.1.24`。页面、API、SSE 使用同源 HTTPS，网页终端使用 WSS；旧 HTTP 3000 入口已关闭。雷池控制台为 `https://192.168.1.24:9443`。
 
+监控平台允许 `192.168.1.0/24`，包括 SD-WAN 的 SNAT 网关 `192.168.1.199`；不得在平台入口单独拒绝该网关，否则 SD-WAN 页面及 API 会返回 403。雷池控制台使用独立的管理访问策略。
+
 独立模式和 Vite 开发预览也使用 HTTPS：默认读取 `/etc/node-monitor/tls/server.crt` 和 `server.key`，可通过 `WATCH_NANDA_TLS_CERT`、`WATCH_NANDA_TLS_KEY` 指定证书文件，访问 `https://<证书中的服务器地址>:3000`。`/api` 由 Vite 代理到本机后端，不对外开放 7980。没有证书时启动失败，不回退 HTTP。
 
 启动脚本验证 HTTPS 证书，默认健康检查地址为 `192.168.1.24`，可用 `WATCH_NANDA_HTTPS_HOST` 指定证书中的主机名/IP；私有 CA 默认 `/etc/node-monitor/tls/ca.crt`，可用 `WATCH_NANDA_TLS_CA` 覆盖。浏览器和节点需信任该 CA。HTTP 仅用于服务器回环地址上的内部代理及后端健康检查。

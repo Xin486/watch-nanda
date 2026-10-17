@@ -67,6 +67,6 @@ SHOW CREATE TABLE agent_credentials;
 `deploy/production/` 提供此主机的 Nginx 和后端 systemd 配置。
 部署后后端由 `watch-nanda-backend.service` 管理，仅监听 127.0.0.1:7980；前端构建结果复制到 `/var/www/watch-nanda`，由 Nginx 的 HTTPS 443 入口经雷池 WAF 提供。
 新版 `start.sh`/`stop.sh` 会识别本项目 systemd 服务，不再重复启动开发服务器。运维可使用 `bash start.sh --restart` 或 `systemctl restart watch-nanda-backend nginx`。
-管理页面为 `https://192.168.1.24`，API、SSE 通过同源 HTTPS，终端使用 WSS，旧 HTTP 3000 入口关闭。公网仅开放 Agent 上报路径；管理页面及管理 API 仍限制为内网并排除 SD-WAN 网关 .199。更新时保留现有雷池 Nginx 配置。
+管理页面为 `https://192.168.1.24`，API、SSE 通过同源 HTTPS，终端使用 WSS，旧 HTTP 3000 入口关闭。公网仅开放 Agent 上报路径；管理页面及管理 API 允许 `192.168.1.0/24`，其中 `.199` 是 SD-WAN 的 SNAT 网关，必须保持允许。其他来源仍拒绝访问。更新时保留现有雷池 Nginx 配置。
 内部 TLS 的公共 CA 为 `/etc/node-monitor/tls/ca.crt`，节点配置 `ca_file` 指向其可信副本。
 CA 私钥应留在 root 的受限备份目录；节点无需任何 SSH 私钥或 TLS 客户端私钥。
