@@ -115,6 +115,21 @@ class InstallerTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_registered_waf_nginx_is_owned_only_by_its_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'nginx.conf'
+            config.write_text('# watch-nanda-managed-root: '+str(life.ROOT.resolve())+'\nroot /var/www/watch-nanda;\n')
+            self.assertTrue(life.nginx_owned(config))
+            config.write_text('# watch-nanda-managed-root: /another/checkout\nroot /var/www/watch-nanda;\n')
+            self.assertFalse(life.nginx_owned(config))
+
+    def test_https_health_check_verifies_ca_and_uses_https_origin(self):
+        response=Mock();response.__enter__=Mock(return_value=Mock(status=200));response.__exit__=Mock(return_value=False)
+        with patch.dict(os.environ,{'WATCH_NANDA_HTTPS_HOST':'monitor.example.com'}),patch.object(life.ssl,'create_default_context') as context,patch.object(life,'urlopen',return_value=response) as request:
+            life.wait_https()
+        self.assertEqual(request.call_args.args[0],'https://monitor.example.com:443/')
+        self.assertIs(request.call_args.kwargs['context'],context.return_value)
+
     def test_systemd_from_another_checkout_is_never_touched(self):
         with patch.object(life,'unit_directory',return_value='/unrelated/backend'),self.assertRaises(RuntimeError):
             life.managed_services()
@@ -144,6 +159,7 @@ class LifecycleTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform=='linux','Requires Linux /proc and process groups')
     def test_real_standalone_start_twice_stop_and_preserve_unrelated_process(self):
+        if not shutil.which('openssl'): self.skipTest('OpenSSL needed for HTTPS preview fixture')
         with tempfile.TemporaryDirectory(prefix='watch nanda ') as directory:
             root=Path(directory)
             for child in ['backend/.venv/bin','frontend/node_modules/vite/bin','frontend/dist']:
@@ -152,7 +168,11 @@ class LifecycleTests(unittest.TestCase):
             (root/'backend/migrate_agent.py').write_text('print("test schema ready")\n')
             server='import sys\nfrom http.server import HTTPServer,BaseHTTPRequestHandler\nclass Handler(BaseHTTPRequestHandler):\n def do_GET(self):\n  self.send_response(200);self.end_headers();self.wfile.write(b"ok")\nHTTPServer(("127.0.0.1",int(sys.argv[sys.argv.index("--port")+1])),Handler).serve_forever()\n'
             (root/'backend/uvicorn.py').write_text(server)
-            (root/'frontend/node_modules/vite/bin/vite.js').write_text(server)
+            tls_server=server.replace('HTTPServer(("127.0.0.1",int(sys.argv[sys.argv.index("--port")+1])),Handler).serve_forever()',
+                'import ssl,os\nsrv=HTTPServer(("127.0.0.1",int(sys.argv[sys.argv.index("--port")+1])),Handler)\nctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\nctx.load_cert_chain(os.environ["WATCH_NANDA_TLS_CERT"],os.environ["WATCH_NANDA_TLS_KEY"])\nsrv.socket=ctx.wrap_socket(srv.socket,server_side=True)\nsrv.serve_forever()')
+            (root/'frontend/node_modules/vite/bin/vite.js').write_text(tls_server)
+            cert=root/'test.crt';key=root/'test.key'
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1'],check=True,capture_output=True)
             (root/'frontend/dist/index.html').write_text('test')
             def unused_port():
                 with socket.socket() as s:
@@ -160,7 +180,7 @@ class LifecycleTests(unittest.TestCase):
             unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
             records=[]
             try:
-                with patch.object(life,'ROOT',root),patch.object(life,'RUNTIME',root/'.runtime'),patch.object(life,'BACKEND_PORT',unused_port()),patch.object(life,'FRONTEND_PORT',unused_port()),patch.object(life.shutil,'which',return_value=sys.executable):
+                with patch.dict(os.environ,{'WATCH_NANDA_HTTPS_HOST':'127.0.0.1','WATCH_NANDA_TLS_CERT':str(cert),'WATCH_NANDA_TLS_KEY':str(key),'WATCH_NANDA_TLS_CA':str(cert)}),patch.object(life,'ROOT',root),patch.object(life,'RUNTIME',root/'.runtime'),patch.object(life,'BACKEND_PORT',unused_port()),patch.object(life,'FRONTEND_PORT',unused_port()),patch.object(life.shutil,'which',return_value=sys.executable):
                     life.ensure_runtime()
                     life.standalone_start();records=life.read_state()
                     self.assertEqual(len(records),2)

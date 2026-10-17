@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -34,12 +35,17 @@ def unit_directory(unit):
     return values.get('WorkingDirectory', '') if values.get('LoadState') == 'loaded' else None
 
 
-def nginx_owned():
+def nginx_owned(config=None):
     # Existing production nginx belongs exclusively to this application. Never
     # stop a shared nginx merely because it is running or listening on port 3000.
-    config = Path('/etc/nginx/nginx.conf')
+    config = config or Path('/etc/nginx/nginx.conf')
     template = ROOT / 'deploy' / 'production' / 'nginx.conf'
-    return config.is_file() and template.is_file() and config.read_text().strip() == template.read_text().strip()
+    if not config.is_file():
+        return False
+    content = config.read_text()
+    marker = '# watch-nanda-managed-root: ' + str(ROOT.resolve())
+    registered = marker in content.splitlines() and 'root /var/www/watch-nanda;' in content
+    return registered or (template.is_file() and content.strip() == template.read_text().strip())
 
 
 def managed_services():
@@ -148,6 +154,22 @@ def wait_http(port, path='/', timeout=40):
     raise RuntimeError(f'{port} 端口健康检查失败；请检查本项目日志')
 
 
+def wait_https(port=443, path='/', timeout=40):
+    host = os.environ.get('WATCH_NANDA_HTTPS_HOST', '192.168.1.24')
+    ca = Path(os.environ.get('WATCH_NANDA_TLS_CA', '/etc/node-monitor/tls/ca.crt'))
+    context = ssl.create_default_context(cafile=str(ca) if ca.is_file() else None)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(f'https://{host}:{port}{path}', context=context, timeout=2) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            pass
+        time.sleep(1)
+    raise RuntimeError(f'HTTPS {host}:{port} 健康检查失败；请检查证书信任与服务日志')
+
+
 def standalone_stop(records):
     active = [r for r in records if owned(r)]
     for record in reversed(active):
@@ -179,7 +201,7 @@ def standalone_start():
         if not any(r.get('role') == role for r in previous) and not port_free(port):
             raise RuntimeError(f'{port} 端口被未登记进程占用，拒绝重复启动或自动换端口')
     commands = [
-        ('backend', [str(python), '-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', str(BACKEND_PORT)]),
+        ('backend', [str(python), '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', str(BACKEND_PORT)]),
         ('frontend', [node, str(vite), 'preview', '--host', '0.0.0.0', '--port', str(FRONTEND_PORT), '--strictPort']),
     ]
     new = []
@@ -206,14 +228,14 @@ def standalone_start():
             new.append(record)
             save_state(previous + new)
         wait_http(BACKEND_PORT, '/api/servers')
-        wait_http(FRONTEND_PORT)
+        wait_https(FRONTEND_PORT)
     except BaseException:
         try:
             standalone_stop(new)
         finally:
             save_state(previous + [r for r in new if owned(r)])
         raise
-    print('项目已在后台运行（重复 start 不会新增实例）。页面端口3000，API端口7980。')
+    print('项目已在后台运行（重复 start 不会新增实例）。页面：https://<服务器IP>:3000；API 使用同源 HTTPS。')
 
 
 def systemd_quote(value):
@@ -231,7 +253,7 @@ def install_services():
     if any(owned(r) for r in runtime):
         raise RuntimeError('请先运行 stop.sh 停止 standalone 实例，再安装 systemd 服务')
     python = ROOT/'backend'/'.venv'/'bin'/'python'
-    command = systemd_quote(python) + ' -m uvicorn main:app --host 0.0.0.0 --port 7980 --no-server-header'
+    command = systemd_quote(python) + ' -m uvicorn main:app --host 127.0.0.1 --port 7980 --no-server-header'
     units = [(BACKEND_UNIT, ROOT/'backend', command)]
     if nginx_owned():
         # Keep old hashed assets for open browser tabs; publish index last.
@@ -324,7 +346,7 @@ def main():
             systemctl('stop' if args.action == 'stop' else args.action, services)
             if args.action != 'stop':
                 wait_http(7980, '/api/servers')
-                wait_http(3000)
+                wait_https(443 if 'nginx.service' in services else FRONTEND_PORT)
             print('已操作本项目服务：' + ', '.join(services) + '；MySQL 不受影响。')
         elif args.action == 'stop':
             standalone_stop(read_state())

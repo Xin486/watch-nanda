@@ -109,8 +109,7 @@ location = /api/agent/report {
 
 只需把上报接口提供给节点，现有管理接口继续限定在管理网络。不要将未鉴权的全部管理接口公开到互联网。
 反向代理日志不得记录 Authorization 头或请求正文。可在代理层加请求限速和并发连接限制。
-若网页也使用 HTTPS，需要代理其 /api/ 路径，并对 /api/stream/servers 关闭 proxy_buffering；前端会自动使用同源地址。
-保持现有 HTTP 管理页面时仍使用 7980，不必为了上报迁移管理页面。
+管理网页、API 和 SSE 统一使用同源 HTTPS，对 /api/stream/servers 关闭 proxy_buffering；网页终端使用 WSS。后端 7980 仅监听 127.0.0.1，旧 HTTP 页面入口关闭；本机反向代理到后端的回环连接可使用 HTTP。
 
 Agent 强制 HTTPS、验证证书并拒绝重定向。自建 CA 可在节点配置中增加 ca_file，指向只含 CA 证书的文件；不需要节点 TLS 私钥。
 

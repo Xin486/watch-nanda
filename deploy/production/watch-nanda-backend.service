@@ -9,7 +9,7 @@ Type=simple
 User=root
 WorkingDirectory=/home/test/Downloads/watch-nanda/monitor_platform/backend
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 7980 --no-server-header
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 7980 --no-server-header
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=60

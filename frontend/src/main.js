@@ -4,7 +4,10 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
+import { ensureHttps } from './utils/transport'
 
-const app = createApp(App)
-app.use(router)      // 注册 vue-router
-app.mount('#app')    // 挂载到 index.html 中的 #app
+if (ensureHttps()) {
+  const app = createApp(App)
+  app.use(router)
+  app.mount('#app')
+}

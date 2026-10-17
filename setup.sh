@@ -59,4 +59,4 @@ if (( SYSTEMD )); then
 fi
 printf '\n初始化完成。启动：bash "%s/start.sh"\n' "$PROJECT_ROOT"
 printf '已启动的服务请用 bash "%s/start.sh" --restart 加载新版本。\n' "$PROJECT_ROOT"
-printf '页面：http://<服务器IP>:3000；节点主动上报的 HTTPS 配置见 agent/README.md。\n'
+printf '页面：生产环境 https://<服务器IP>；独立模式 https://<服务器IP>:3000。证书配置见 README.md。\n'

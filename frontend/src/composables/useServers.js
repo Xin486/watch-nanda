@@ -1,11 +1,12 @@
 import { ref, computed, onUnmounted } from 'vue'
 import axios from 'axios'
 import { freshServer } from '../utils/serverStatus'
+import { secureOrigin } from '../utils/transport'
 
 const rawServers = ref([])
 const elapsed = ref(0)
 const servers = computed(() => rawServers.value.map(s => freshServer(s, elapsed.value)))
-const BASE = window.location.protocol === 'https:' ? window.location.origin : `http://${window.location.hostname}:7980`
+const BASE = secureOrigin()
 let source = null, subscribers = 0, timer = null, fallbackTimer = null
 let controller = null, receivedAt = 0, lastEventAt = 0, generation = 0, revision = 0
 

@@ -10,8 +10,9 @@
 
 | 组件 | 技术 | 端口 |
 |------|------|------|
-| 前端 | Vue 3 + Vite | 3000 |
-| 后端 | FastAPI + APScheduler + Paramiko | 7980 |
+| 对外入口 | Nginx HTTPS → 雷池 WAF → 平台 | 443 |
+| 前端 | Vue 3 + Vite（生产环境由 Nginx 托管） | 独立模式 HTTPS 3000 |
+| 后端 | FastAPI + APScheduler + Paramiko（仅本机监听） | 127.0.0.1:7980 |
 | 数据库 | MySQL（库名 `monitor_db`） | 3306 |
 
 ## 部署步骤
@@ -105,7 +106,13 @@ bash start.sh --restart # 加载新配置/版本
 bash stop.sh            # 只停止本项目，保留 MySQL 和其他项目
 ```
 
-启动后访问：`http://<服务器IP>:3000`
+生产环境访问：`https://192.168.1.24`。页面、API、SSE 使用同源 HTTPS，网页终端使用 WSS；旧 HTTP 3000 入口已关闭。雷池控制台为 `https://192.168.1.24:9443`。
+
+独立模式和 Vite 开发预览也使用 HTTPS：默认读取 `/etc/node-monitor/tls/server.crt` 和 `server.key`，可通过 `WATCH_NANDA_TLS_CERT`、`WATCH_NANDA_TLS_KEY` 指定证书文件，访问 `https://<证书中的服务器地址>:3000`。`/api` 由 Vite 代理到本机后端，不对外开放 7980。没有证书时启动失败，不回退 HTTP。
+
+启动脚本验证 HTTPS 证书，默认健康检查地址为 `192.168.1.24`，可用 `WATCH_NANDA_HTTPS_HOST` 指定证书中的主机名/IP；私有 CA 默认 `/etc/node-monitor/tls/ca.crt`，可用 `WATCH_NANDA_TLS_CA` 覆盖。浏览器和节点需信任该 CA。HTTP 仅用于服务器回环地址上的内部代理及后端健康检查。
+
+已接入雷池的生产 Nginx 使用 `# watch-nanda-managed-root: <项目绝对路径>` 标记归属。启动、升级脚本识别此标记并保留现有 WAF 配置，不创建第二个前端服务。`deploy/production/nginx.conf` 是未接入 WAF 时的基础 HTTPS 配置，不应覆盖现有雷池入口。
 
 普通后台模式将 PID、进程启动时间和命令指纹保存在 `.runtime`，日志分别在 `backend/backend.log`、`frontend/frontend.log`。
 启动前校验迁移状态和 7980/3000 端口；端口冲突直接报错，不会悄悄改用 3001。

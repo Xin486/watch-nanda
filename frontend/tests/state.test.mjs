@@ -23,7 +23,7 @@ function setup(file, names, overrides={}) {
     window:{location:{hostname:'test'}, addEventListener:(name,cb)=>listeners.set(name,cb),removeEventListener:name=>listeners.delete(name),dispatchEvent:()=>{}},
     localStorage:{getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v)},
     document:{}, console, alert:()=>{}, CustomEvent:class{}, AbortController,
-    performance:{now:()=>1000}, freshServer, ...overrides,
+    performance:{now:()=>1000}, freshServer, secureOrigin:()=> 'https://test', ...overrides,
   }
   vm.createContext(context)
   vm.runInContext(code+'\nthis.exposed={'+names.join(',')+'}',context)

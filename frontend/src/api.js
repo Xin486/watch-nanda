@@ -1,18 +1,11 @@
 /**
- * 统一的后端 API 请求封装
- * --------------------------------
- * 前后端部署在同一台机器上：
- * - 前端 Vite   : http://<主机>:3000
- * - 后端 FastAPI : http://<主机>:7980
- * 因此只需取当前页面主机名 + 固定端口即可定位后端。
- *
- * 注意：服务器实时数据已改为 SSE 推送（见 composables/useServers.js），
- *       直接连接 http://<主机>:7980/api/stream/servers，不经过本模块。
+ * API 和 SSE 统一通过同源 HTTPS 入口，不再直连后端端口。
  */
 import axios from 'axios'
+import { secureOrigin } from './utils/transport'
 
 const http = axios.create({
-  baseURL: window.location.protocol === 'https:' ? window.location.origin : `http://${window.location.hostname}:7980`,
+  baseURL: secureOrigin(),
   timeout: 15000,
 })
 
