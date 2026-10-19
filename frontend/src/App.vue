@@ -1,19 +1,19 @@
 <template>
   <div class="app-layout">
-    <!-- 左侧深色侧边栏 -->
+    <!-- 与主内容共享日夜主题的导航栏 -->
     <aside class="sidebar">
       <div class="logo-area">
         <h2>{{ companyName || '南大仙林' }}</h2>
       </div>
       
-      <nav class="menu">
+      <nav class="menu" aria-label="主导航">
         <router-link to="/dashboard" class="menu-item" :class="{ active: $route.path === '/dashboard' && !$route.query.group }">
-          <i class="icon">📊</i> 全部节点
+          <NavIcon class="icon" name="nodes"/> 全部节点
         </router-link>
         
         <div class="menu-group-header">
           <span>服务器分组</span>
-          <span class="add-group-btn" @click="addNewGroup" title="新增分组">➕</span>
+          <button type="button" class="add-group-btn" @click="addNewGroup" aria-label="新增分组" title="新增分组"><NavIcon name="plus"/></button>
         </div>
         
         <router-link 
@@ -23,7 +23,7 @@
           class="menu-item sub-item"
           :class="{ active: $route.query.group === group }"
         >
-          <i class="icon">📁</i> {{ group }}
+          <NavIcon class="icon" name="folder"/> {{ group }}
         </router-link>
         
         <div class="menu-group-header" style="margin-top: 15px;">
@@ -31,17 +31,17 @@
         </div>
         
         <a href="#" class="menu-item" @click.prevent="openAddServerModal">
-          <i class="icon">🖥️</i> 增加服务器
+          <NavIcon class="icon" name="add"/> 增加服务器
         </a>
         <router-link to="/history" class="menu-item" active-class="active">
-          <i class="icon">📈</i> 历史负载
+          <NavIcon class="icon" name="history"/> 历史负载
         </router-link>
-        <router-link to="/operations" class="menu-item" :class="{ active: $route.path === '/operations' || $route.path.endsWith('/operations') }"><i class="icon">⌘</i> 运维命令行</router-link>
+        <router-link to="/operations" class="menu-item" :class="{ active: $route.path === '/operations' || $route.path.endsWith('/operations') }"><NavIcon class="icon" name="terminal"/> 运维命令行</router-link>
         <router-link to="/settings" class="menu-item" active-class="active">
-          <i class="icon">⚙️</i> 设置
+          <NavIcon class="icon" name="settings"/> 设置
         </router-link>
         <router-link to="/cleanup" class="menu-item" active-class="active">
-          <i class="icon">🗑️</i> 数据清理
+          <NavIcon class="icon" name="trash"/> 数据清理
         </router-link>
       </nav>
     </aside>
@@ -61,6 +61,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AddServerModal from './components/AddServerModal.vue'
+import NavIcon from './components/NavIcon.vue'
 import { useServers } from './composables/useServers'
 
 const route = useRoute()
@@ -122,48 +123,48 @@ watch(() => route.path, () => {
 </script>
 
 <style>
-/* 包含之前的全局与侧边栏样式 */
-html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; }
 .app-layout { display: flex; height: 100vh; overflow: hidden; }
-.sidebar { width: 240px; flex-shrink: 0; background: #0f172a; color: #cbd5e1; display: flex; flex-direction: column; }
-.logo-area { padding: 20px; text-align: center; border-bottom: 1px solid #1e293b; }
-.logo-area h2 { margin: 0; color: #fff; font-size: 20px; font-weight: 600; letter-spacing: 1px; }
-.menu { flex: 1; overflow-y: auto; padding: 20px 0; }
-.menu-group-header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px 5px; font-size: 12px; color: #64748b; font-weight: bold; }
-.add-group-btn { cursor: pointer; color: #3b82f6; font-size: 14px; transition: transform 0.2s; }
-.add-group-btn:hover { color: #60a5fa; transform: scale(1.2); }
-.menu-item { display: flex; align-items: center; padding: 12px 20px; color: #cbd5e1; text-decoration: none; transition: 0.2s; }
-.menu-item:hover { background: #1e293b; color: #fff; }
-.menu-item.active { background: #3b82f6; color: #fff; border-left: 4px solid #93c5fd; padding-left: 16px;}
-.icon { margin-right: 12px; font-style: normal; font-size: 18px; }
-.sub-item { padding-left: 30px; font-size: 14px; }
-.main-content { flex: 1; min-width: 0; overflow-y: auto; background: #f8fafc; }
+.sidebar { width: 240px; flex-shrink: 0; background: var(--sidebar-bg); color: var(--text-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; box-sizing: border-box; }
+.logo-area { padding: 27px 28px; border-bottom: 1px solid var(--border); }
+.logo-area h2 { margin: 0; color: var(--text); font-size: 21px; font-weight: 650; letter-spacing: .5px; }
+.menu { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 12px 22px; }
+.menu-group-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 14px 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
+.add-group-btn { display: grid; place-items: center; width: 26px; height: 26px; padding: 3px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-secondary); }
+.add-group-btn svg { width: 17px; height: 17px; }
+.add-group-btn:hover { background: var(--nav-hover-bg); color: var(--accent); }
+.menu-item { display: flex; align-items: center; gap: 12px; padding: 12px 15px; margin: 3px 0; border-radius: 9px; color: var(--text-secondary); font-size: 14px; text-decoration: none; }
+.menu-item:hover { background: var(--nav-hover-bg); color: var(--text); }
+.menu-item.active { background: var(--nav-active-bg); color: var(--accent); box-shadow: inset 3px 0 var(--accent); font-weight: 600; }
+.menu-item .icon { width: 20px; height: 20px; flex-shrink: 0; }
+.menu-item:focus-visible,.add-group-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--page-bg); }
 
 /* 弹窗样式 */
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-.modal-content { background: #fff; padding: 25px; border-radius: 8px; width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-.modal-content h3 { margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; color: #1e293b; }
+.modal-content { background:var(--surface); padding: 25px; border-radius: 8px; width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+.modal-content h3 { margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; color: var(--text); }
 .form-grid { display: flex; flex-direction: column; gap: 12px; margin: 20px 0; }
 .form-item { display: flex; flex-direction: column; gap: 5px; }
-.form-item label { font-size: 13px; color: #64748b; font-weight: bold; }
-.form-item input { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 4px; outline: none; transition: border-color 0.2s; }
-.form-item input:focus { border-color: #3b82f6; }
-.hint-text { font-size: 12px; color: #ef4444; margin-bottom: 15px; }
+.form-item label { font-size: 13px; color: var(--text-muted); font-weight: bold; }
+.form-item input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; outline: none; transition: border-color 0.2s; }
+.form-item input:focus { border-color:var(--primary-bg); }
+.hint-text { font-size: 12px; color: var(--danger); margin-bottom: 15px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
-.btn-cancel { padding: 8px 16px; border: 1px solid #cbd5e1; background: #fff; border-radius: 4px; cursor: pointer; color: #475569; }
-.btn-save { padding: 8px 16px; border: none; background: #3b82f6; color: white; border-radius: 4px; cursor: pointer; font-weight: bold; }
-.btn-save:hover { background: #2563eb; }
+.btn-cancel { padding: 8px 16px; border: 1px solid var(--border); background:var(--surface); border-radius: 4px; cursor: pointer; color: var(--text-secondary); }
+.btn-save { padding: 8px 16px; border: none; background:var(--primary-bg); color:var(--on-primary); border-radius: 4px; cursor: pointer; font-weight: bold; }
+.btn-save:hover { background:var(--primary-bg); }
 .node-status { font-weight: 600; white-space: nowrap; }
-.node-status.online { color: #059669; }
-.node-status.offline { color: #dc2626; }
-.node-status.stale { color: #d97706; }
-.node-status.pending { color: #64748b; }
+.node-status.online { color: var(--success); }
+.node-status.offline { color: var(--danger); }
+.node-status.stale { color: var(--warning); }
+.node-status.pending { color: var(--text-muted); }
 button:disabled { opacity: .6; cursor: not-allowed; }
 @media (max-width: 1100px) { .sidebar { width: 190px; flex-shrink: 0; } }
-@media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 16px 10px; } .menu-item { padding: 12px 10px; } }
+@media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 20px 14px; } .menu { padding: 10px 8px; } .menu-item { padding: 11px 10px; gap: 8px; font-size: 12px; } }
 @media (max-width: 600px) {
   .app-layout { flex-direction: column; height: 100dvh; }
-  .sidebar { width: 100%; }
+  .sidebar { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
   .logo-area { padding: 12px 16px; text-align: left; }
   .logo-area h2 { font-size: 16px; }
   .menu { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px; }
@@ -171,9 +172,9 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   .menu-group-header:has(.add-group-btn) { display: flex; align-items: center; padding: 0 5px; }
   .menu-group-header:has(.add-group-btn)>span:first-child { display: none; }
   .menu-item, .menu-item.sub-item, .menu-item.active { padding: 8px 11px; border: 0; border-radius: 6px; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
-  .menu-item .icon { font-size: 13px; margin-right: 6px; }
+  .menu-item .icon { width: 16px; height: 16px; }
   .main-content { min-height: 0; }
 }
-.add-node-success { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 14px 20px; box-sizing: border-box; border: 1px solid #bbf7d0; border-radius: 10px; background: #f0fdf4; color: #166534; font-size: 13px; box-shadow: 0 8px 28px #0f172a1a; }
-.add-node-success span { display: grid; place-items: center; flex-shrink: 0; width: 21px; height: 21px; border-radius: 50%; background: #16a34a; color: #fff; font-size: 13px; }
+.add-node-success { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 1100; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 14px 20px; box-sizing: border-box; border: 1px solid var(--success-border); border-radius: 10px; background: var(--success-bg); color: var(--success); font-size: 13px; box-shadow: 0 8px 28px #0f172a1a; }
+.add-node-success span { display: grid; place-items: center; flex-shrink: 0; width: 21px; height: 21px; border-radius: 50%; background: var(--success); color:var(--surface); font-size: 13px; }
 </style>

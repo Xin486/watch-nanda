@@ -1,0 +1,85 @@
+:root {
+  color-scheme: light;
+  --page-bg: #f2f5fa;
+  --sidebar-bg: #e8eef7;
+  --surface: #ffffff;
+  --surface-soft: #f5f8fc;
+  --surface-muted: #eaf0f8;
+  --text: #20334d;
+  --text-secondary: #415a78;
+  --text-muted: #526985;
+  --border: #d8e1ee;
+  --border-soft: #e5ebf4;
+  --accent: #245dcc;
+  --accent-soft: #e8f0ff;
+  --accent-border: #adc6ef;
+  --nav-active-bg: #d5e3fa;
+  --nav-hover-bg: #dde7f5;
+  --primary-bg: #245dcc;
+  --primary-hover: #1d4fb0;
+  --on-primary: #ffffff;
+  --success: #087960;
+  --success-bg: #eaf8f2;
+  --success-border: #c3e5d8;
+  --danger: #bf344e;
+  --danger-bg: #fff0f3;
+  --danger-border: #efc9d2;
+  --warning: #92610e;
+  --warning-bg: #fff8e8;
+  --warning-border: #e9d8ae;
+  --metric-cpu: #4e83dc;
+  --metric-memory: #23a18b;
+  --metric-gpu: #9870d2;
+  --metric-power: #d5a34c;
+  --track: #e4ebf5;
+  --focus: #6d9ae0;
+  --shadow: 0 2px 6px #20334d06;
+  --shadow-hover: 0 8px 24px #20334d12;
+  --shadow-modal: 0 30px 100px #0f172a40;
+  --backdrop: #17253c80;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page-bg: #243247;
+  --sidebar-bg: #1d293b;
+  --surface: #2e3e53;
+  --surface-soft: #29394d;
+  --surface-muted: #35475f;
+  --text: #f0f5fc;
+  --text-secondary: #c9d5e6;
+  --text-muted: #b5c4d6;
+  --border: #43556c;
+  --border-soft: #3c4e65;
+  --accent: #9bc1ff;
+  --accent-soft: #304b6e;
+  --accent-border: #587ca9;
+  --nav-active-bg: #354d70;
+  --nav-hover-bg: #2a3c55;
+  --primary-bg: #3566ad;
+  --primary-hover: #4075c0;
+  --on-primary: #ffffff;
+  --success: #70e2bc;
+  --success-bg: #244c48;
+  --success-border: #3b7164;
+  --danger: #ffacb9;
+  --danger-bg: #573a4a;
+  --danger-border: #865265;
+  --warning: #f6d17f;
+  --warning-bg: #514839;
+  --warning-border: #786747;
+  --metric-cpu: #8cb6f4;
+  --metric-memory: #58d5b2;
+  --metric-gpu: #c2a6f6;
+  --metric-power: #edc779;
+  --track: #435770;
+  --focus: #9bc1ff;
+  --shadow: 0 2px 6px #0b152014;
+  --shadow-hover: 0 8px 24px #0b152030;
+  --shadow-modal: 0 30px 100px #060d1a80;
+  --backdrop: #0b1427aa;
+}
+
+html { background: var(--page-bg); }
+/* Native controls and scrollbars use the same palette as the application. */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }

@@ -24,5 +24,5 @@ async function toggle() {
 }
 </script>
 <style scoped>
-.node-bell-wrap{position:relative;display:inline-flex}.node-bell{display:grid;place-items:center;width:33px;height:33px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#94a3b8;cursor:pointer}.node-bell.enabled{color:#2563eb;background:#eff6ff;border-color:#dbeafe}.node-bell:hover{border-color:#93c5fd}.node-bell svg{width:17px;height:17px}.node-bell:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}.bell-error{position:absolute;right:0;top:38px;width:180px;padding:9px;border-radius:8px;background:#fff1f2;color:#be123c;box-shadow:0 4px 20px #0f172a20;z-index:5;font-size:12px}
+.node-bell-wrap{position:relative;display:inline-flex}.node-bell{display:grid;place-items:center;width:33px;height:33px;border:1px solid var(--border);border-radius:10px;background:var(--surface-soft);color:var(--text-muted);cursor:pointer}.node-bell.enabled{color:var(--accent);background:var(--accent-soft);border-color:var(--accent-border)}.node-bell:hover{border-color:var(--focus)}.node-bell svg{width:17px;height:17px}.node-bell:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.bell-error{position:absolute;right:0;top:38px;width:180px;padding:9px;border-radius:8px;background:var(--danger-bg);color:var(--danger);box-shadow:0 4px 20px #0f172a20;z-index:5;font-size:12px}
 </style>
