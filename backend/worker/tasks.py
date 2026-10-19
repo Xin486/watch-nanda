@@ -36,6 +36,7 @@ from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCr
 
 # 内存级并发锁：记录正在采集的 Server ID，防止同一节点重复采集
 running_tasks = set()
+refresh_requests = set()
 tasks_lock = Lock()
 logger = logging.getLogger(__name__)
 scheduler = None
@@ -471,6 +472,13 @@ def _do_monitor_server(server_id):
     finally:
         with tasks_lock:
             running_tasks.discard(server_id)
+            refresh = server_id in refresh_requests
+            refresh_requests.discard(server_id)
+        if refresh:
+            try:
+                submit_server(server_id)
+            except RuntimeError:
+                logger.info('Collection refresh deferred until scheduler restart for node %s', server_id)
 
 
 def submit_server(server_id):
@@ -484,6 +492,16 @@ def submit_server(server_id):
         with tasks_lock:
             running_tasks.discard(server_id)
         raise
+
+
+def request_server_refresh(server_id):
+    """Retry verified credentials, even if an obsolete collection is still running."""
+    with tasks_lock:
+        rejected_credentials.pop(server_id, None)
+        if server_id in running_tasks:
+            refresh_requests.add(server_id)
+            return
+    submit_server(server_id)
 
 
 def monitor_all_servers():
@@ -551,6 +569,8 @@ def start_scheduler():
 def stop_scheduler():
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
+    with tasks_lock:
+        refresh_requests.clear()
     executor.shutdown(wait=True, cancel_futures=True)
     with tasks_lock:
         running_tasks.clear()

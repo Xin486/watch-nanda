@@ -67,6 +67,25 @@ test('SSE remains authoritative over late REST; silent stream starts fallback; c
   assert.equal(h.listeners.has('servers-refresh'),false)
 })
 
+test('credential sync updates a shared node immediately without resetting other nodes freshness',async()=>{
+  const requests=[],sources=[];let now=1000
+  const h=setup('composables/useServers.js',['useServers'],{
+    axios:{get:()=>{const d=deferred();requests.push(d);return d.promise}},performance:{now:()=>now},
+    EventSource:class{constructor(){sources.push(this)}close(){}},
+  })
+  const state=h.useServers();state.subscribe()
+  sources[0].onmessage({data:JSON.stringify([{id:1,collection_status:'offline',data_age_seconds:20},{id:2,collection_status:'online',data_age_seconds:10}])})
+  now=6000;h.intervals.find(t=>t.ms===1000).cb()
+  h.listeners.get('servers-refresh')()
+  state.patchServer({id:1,ssh_user:'manager',has_ssh_password:true,collection_status:'pending',data_age_seconds:null})
+  assert.equal(state.servers.value[0].status,'pending')
+  assert.equal(state.servers.value[0].has_ssh_password,true)
+  assert.equal(state.servers.value[1].data_age_seconds,15)
+  requests.at(-1).resolve({data:[{id:1,collection_status:'offline',data_age_seconds:20}]});await tick()
+  assert.equal(state.servers.value[0].status,'pending');assert.equal(state.servers.value.length,2)
+  h.unmounts[0]()
+})
+
 test('settings late synchronization preserves edits and password omission is safe',async()=>{
   const a=deferred(), e=deferred(), saved=[]
   const h=setup('views/Settings.vue',['loadConfigs','alertForm','emailForm','alertDirty','emailDirty','saveEmailSettings','emailLoaded','hasPassword'],{

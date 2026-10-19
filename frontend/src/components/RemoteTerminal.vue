@@ -63,16 +63,16 @@ async function connect() {
       let data
       try { data = JSON.parse(event.data) } catch { return }
       if (data.type === 'connected') {
+        props.access.connectionResult({ ...data, ok: true, message: 'SSH 握手及密码认证成功' })
         connected.value = true
         connecting.value = false
         terminal.options.disableStdin = false
         terminal.focus()
         resize()
-        window.dispatchEvent(new CustomEvent('servers-refresh'))
       } else if (data.type === 'output') terminal.write(data.data)
       else if (data.type === 'error') {
         props.access.error = data.message
-        props.access.check = data
+        props.access.connectionResult(data)
         terminal.writeln(`\r\n[${data.message}]`)
       } else if (data.type === 'closed') terminal.writeln(`\r\n[${data.message}]`)
     }

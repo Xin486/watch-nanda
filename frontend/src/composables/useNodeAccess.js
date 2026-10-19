@@ -5,11 +5,11 @@ import { useServers } from './useServers'
 
 // Both pages share authentication and SSH checks, but keep their actions separate.
 export function useNodeAccess({ selectable = true, activity = ref(false) } = {}) {
-  const route = useRoute(), router = useRouter(), { servers, subscribe } = useServers()
+  const route = useRoute(), router = useRouter(), { servers, subscribe, patchServer } = useServers()
   const secure = location.protocol === 'https:'
   const authenticated = ref(false), operatorPassword = ref(''), loggingIn = ref(false), error = ref('')
   const selectedId = ref(String(route.params.id || '')), useSaved = ref(false)
-  const credentials = ref({ username: '', password: '', save: false })
+  const credentials = ref({ username: '', password: '' })
   const check = ref(null), trustConfirmed = ref(false), testing = ref(false)
   const node = computed(() => servers.value.find(s => String(s.id) === selectedId.value))
   const busy = computed(() => testing.value || activity.value)
@@ -36,8 +36,17 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
   function payload() {
     return useSaved.value ? { use_saved: true } : {
       use_saved: false, username: credentials.value.username.trim(), password: credentials.value.password,
-      save_credentials: credentials.value.save,
+      save_credentials: true,
     }
+  }
+  function connectionResult(data) {
+    if (data.credentials_saved) {
+      patchServer(data.server)
+      useSaved.value = true
+      credentials.value.password = ''
+    }
+    check.value = data
+    window.dispatchEvent(new CustomEvent('servers-refresh'))
   }
   async function testConnection() {
     if (testing.value || !validInput()) return false
@@ -48,8 +57,7 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
     try {
       const { data } = await api.sshTest(id, payload())
       if (disposed || current !== generation) return false
-      check.value = data
-      window.dispatchEvent(new CustomEvent('servers-refresh'))
+      connectionResult(data)
       return data.ok
     } catch (e) {
       if (!disposed && current === generation) handleError(e)
@@ -111,7 +119,7 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
     check.value = null
     trustConfirmed.value = false
     error.value = ''
-    credentials.value = { username: node.value?.ssh_user || 'root', password: '', save: false }
+    credentials.value = { username: node.value?.ssh_user || 'root', password: '' }
     useSaved.value = !!node.value?.has_ssh_password
     autoCheckDone = false
     await maybeAutoCheck()
@@ -119,7 +127,7 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
   watch([useSaved, () => credentials.value.username, () => credentials.value.password], () => {
     check.value = null
     trustConfirmed.value = false
-  })
+  }, { flush: 'sync' })
   onMounted(async () => {
     subscribe()
     if (!secure) return
@@ -141,6 +149,6 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
   return reactive({
     secure, authenticated, operatorPassword, loggingIn, error, selectedId, servers, node, useSaved,
     credentials, check, trustConfirmed, testing, busy, login, logout, testConnection, trustHost,
-    handleError, validInput, payload,
+    handleError, validInput, payload, connectionResult,
   })
 }

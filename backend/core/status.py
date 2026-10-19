@@ -19,6 +19,11 @@ def freshness(server, now=None):
     checked_at = collection_time({'timestamp': data.get('received_at')}) if agent else collection_time(data)
     age = max(0, (now - checked_at).total_seconds()) if checked_at else None
     if agent:
+        reset_at = collection_time({'timestamp': data.get('collection_reset_at')})
+        if server.status == 'pending' and reset_at:
+            if (now - reset_at).total_seconds() <= settings.AGENT_OFFLINE_SECONDS:
+                return 'pending', None
+            return 'offline', age
         return ('pending' if age is None else 'offline' if age > settings.AGENT_OFFLINE_SECONDS
                 else 'stale' if age > settings.AGENT_STALE_SECONDS else server.status), age
     status = ("pending" if age is None else

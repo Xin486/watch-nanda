@@ -14,7 +14,9 @@ from starlette.requests import Request
 import main
 from core import operations as ops, ops_auth
 from core.ssh_credentials import encrypt_password
-from models.models import Server, AlertConfig
+from core.ssh_credentials import decrypt_password
+from core.status import freshness, server_payload
+from models.models import Server, AlertConfig, AgentCredential
 from worker import tasks
 
 
@@ -31,6 +33,7 @@ class OperationsTests(unittest.TestCase):
         ops_auth.set_password('test-operator-password')
         ops_auth.sessions.clear();ops_auth.attempts.clear()
         ops.jobs.clear();ops.active_jobs.clear();ops.terminals.clear()
+        tasks.refresh_requests.clear();tasks.rejected_credentials.clear()
 
     def tearDown(self):
         main.app.dependency_overrides.clear()
@@ -38,6 +41,7 @@ class OperationsTests(unittest.TestCase):
         for mocked in reversed(self.startup_patches):mocked.stop()
         ops_auth.sessions.clear();ops_auth.attempts.clear()
         ops.jobs.clear();ops.active_jobs.clear();ops.terminals.clear()
+        tasks.refresh_requests.clear();tasks.rejected_credentials.clear()
         test_monitor.MonitorTests.tearDown(self)
 
     def login(self,client):
@@ -100,6 +104,106 @@ class OperationsTests(unittest.TestCase):
             self.assertFalse(kwargs['allow_agent']);self.assertFalse(kwargs['look_for_keys'])
         self.assertEqual(ops.safe_error(paramiko.AuthenticationException('node-secret'))['code'],'authentication_failed')
         self.assertNotIn('node-secret',str(ops.safe_error(paramiko.AuthenticationException('node-secret'))))
+
+    def test_verified_manual_credentials_sync_offline_ssh_node_and_queue_collection(self):
+        with self.Session() as db:
+            node=db.get(Server,1);node.status='offline';node.offline_since=self.now;node.last_alert_time=self.now
+            node.ssh_password_encrypted=encrypt_password('old-password',node);db.commit()
+        with self.client() as client, patch.object(ops,'connect_ssh') as connect, patch.object(tasks,'request_server_refresh') as refresh:
+            self.login(client)
+            connect.return_value.get_transport.return_value.get_remote_server_key.return_value.asbytes.return_value=b'host'
+            response=client.post('/api/ops/nodes/1/ssh-test',json={'use_saved':False,'username':'manager','password':'new-password','save_credentials':True})
+            result=response.json()
+            self.assertTrue(result['ok']);self.assertTrue(result['credentials_saved'])
+            self.assertEqual(result['server']['collection_status'],'pending')
+            self.assertNotIn('new-password',response.text);self.assertNotIn('expected_credentials',response.text)
+            refresh.assert_called_once_with(1)
+        with self.Session() as db:
+            node=db.get(Server,1)
+            self.assertEqual(node.ssh_user,'manager');self.assertEqual(decrypt_password(node),'new-password')
+            self.assertEqual(node.collection_mode,'ssh');self.assertIsNone(node.latest_status_data)
+            self.assertIsNone(node.offline_since);self.assertIsNone(node.last_alert_time)
+            self.assertEqual(server_payload(node)['status'],'pending')
+        with patch.object(tasks,'collect_server_data',return_value=({'cpu_percent':19},True,'')):
+            tasks._do_monitor_server(1)
+        with self.Session() as db:self.assertEqual(server_payload(db.get(Server,1))['status'],'online')
+
+    def test_agent_credentials_sync_preserves_collection_mode_token_and_fresh_metrics(self):
+        with self.Session() as db:
+            node=db.get(Server,1);node.collection_mode='agent'
+            node.latest_status_data={'timestamp':self.now.isoformat()+'Z','received_at':self.now.isoformat()+'Z','report_id':'existing-report','cpu_percent':42}
+            original=dict(node.latest_status_data)
+            db.add(AgentCredential(server_id=1,token_hash='a'*64));db.commit()
+        with patch.object(tasks,'request_server_refresh') as refresh:
+            config=ops.configuration(1,ops.Connection(use_saved=False,username='test',password='verified-password'))
+            result=ops.save_configuration(config)
+            self.assertFalse(result['collection_reset']);refresh.assert_not_called()
+        with self.Session() as db:
+            node=db.get(Server,1)
+            self.assertEqual(node.collection_mode,'agent');self.assertEqual(decrypt_password(node),'verified-password')
+            self.assertEqual(node.latest_status_data,original);self.assertEqual(node.status,'online')
+            self.assertEqual(db.get(AgentCredential,1).token_hash,'a'*64)
+
+    def test_offline_agent_waits_for_new_report_and_retains_replay_protection(self):
+        from datetime import timedelta
+        from uuid import uuid4
+        from core.agent import accept_report, token_digest, Report
+        from core.config import settings
+        old=self.now-timedelta(hours=1);report_id=str(uuid4())
+        with self.Session() as db:
+            node=db.get(Server,1);node.collection_mode='agent';node.status='offline'
+            node.latest_status_data={'timestamp':old.isoformat()+'Z','received_at':old.isoformat()+'Z','report_id':report_id,'cpu_percent':90}
+            db.add(AgentCredential(server_id=1,token_hash=token_digest('a'*43)));db.commit()
+        with patch.object(tasks,'request_server_refresh') as refresh:
+            result=ops.save_configuration(ops.configuration(1,ops.Connection(use_saved=False,username='test',password='verified-password')))
+            refresh.assert_not_called();self.assertTrue(result['collection_reset'])
+        with self.Session() as db:
+            node=db.get(Server,1)
+            self.assertEqual(freshness(node)[0],'pending');self.assertIsNone(server_payload(node)['data_age_seconds'])
+            self.assertEqual(node.latest_status_data['report_id'],report_id)
+            self.assertEqual(freshness(node,self.now+timedelta(seconds=settings.AGENT_OFFLINE_SECONDS+10))[0],'offline')
+            report=Report(server_id=1,report_id=report_id,sampled_at=old.isoformat()+'Z',uptime_seconds=1,cpu_percent=1,cpu_cores=1,ram_total_mb=1,ram_used_mb=0,ram_percent=0)
+            self.assertEqual(accept_report(db,report,'a'*43)['reason'],'duplicate')
+            report=report.model_copy(update={'report_id':uuid4(),'sampled_at':self.now})
+            self.assertTrue(accept_report(db,report,'a'*43)['accepted'])
+            self.assertEqual(freshness(node)[0],'online');self.assertNotIn('collection_reset_at',node.latest_status_data)
+
+    def test_failed_manual_verification_does_not_overwrite_saved_password_or_state(self):
+        import paramiko
+        with self.Session() as db:
+            node=db.get(Server,1);node.status='offline';node.ssh_password_encrypted=encrypt_password('old-password',node);db.commit()
+        with self.client() as client,patch.object(ops,'connect_ssh',side_effect=paramiko.AuthenticationException()),patch.object(tasks,'request_server_refresh') as refresh:
+            self.login(client)
+            response=client.post('/api/ops/nodes/1/ssh-test',json={'use_saved':False,'username':'new-user','password':'wrong-password','save_credentials':True})
+            self.assertFalse(response.json()['ok']);refresh.assert_not_called()
+        with self.Session() as db:
+            node=db.get(Server,1);self.assertEqual(decrypt_password(node),'old-password');self.assertEqual(node.status,'offline')
+
+    def test_concurrent_credential_change_rejects_stale_save(self):
+        config=ops.configuration(1,ops.Connection(use_saved=False,username='first',password='verified-password'))
+        with self.Session() as db:
+            node=db.get(Server,1);node.ssh_user='newer';node.ssh_password_encrypted=encrypt_password('newer-password',node);db.commit()
+        with self.assertRaises(HTTPException) as error:ops.save_configuration(config)
+        self.assertEqual(error.exception.status_code,409)
+        with self.Session() as db:self.assertEqual(decrypt_password(db.get(Server,1)),'newer-password')
+
+    def test_credential_refresh_during_old_collection_queues_new_config_and_drops_old_failure(self):
+        with self.Session() as db:
+            node=db.get(Server,1);node.ssh_password_encrypted=encrypt_password('old-password',node);db.commit()
+            tasks.rejected_credentials[1]=node.ssh_password_encrypted
+        def old_collection(_):
+            config=ops.configuration(1,ops.Connection(use_saved=False,username='manager',password='new-password'))
+            ops.save_configuration(config)
+            self.assertIn(1,tasks.refresh_requests);self.assertNotIn(1,tasks.rejected_credentials)
+            return {'error_message':'old failure'},False,'old failure'
+        tasks.running_tasks.add(1)
+        with patch.object(tasks,'collect_server_data',old_collection),patch.object(tasks.executor,'submit') as submit:
+            tasks._do_monitor_server(1)
+            submit.assert_called_once_with(tasks._do_monitor_server,1)
+        with self.Session() as db:
+            node=db.get(Server,1);self.assertEqual(node.status,'pending');self.assertIsNone(node.latest_status_data)
+            self.assertEqual(decrypt_password(node),'new-password')
+        self.assertNotIn(1,tasks.refresh_requests)
 
     def test_deployment_secrets_not_in_job_payload_duplicate_job_and_config_edit_blocked(self):
         with self.client() as client,patch.object(ops.workers,'submit') as submit:
@@ -165,3 +269,18 @@ class OperationsTests(unittest.TestCase):
             self.assertTrue(closed.wait(2),'Remote client was not closed after WebSocket disconnect')
             remote.close.assert_called();channel.close.assert_called()
             self.assertFalse(ops.terminals)
+
+    def test_terminal_manual_verification_syncs_credentials_before_connected_message(self):
+        from threading import Event
+        with self.client() as client,patch.object(ops,'connect_ssh') as connect,patch.object(tasks,'request_server_refresh') as refresh:
+            response=self.login(client);cookie=response.headers['set-cookie'].split(';')[0]
+            remote=connect.return_value;channel=remote.invoke_shell.return_value
+            closed=Event();remote.close.side_effect=closed.set
+            channel.recv_ready.return_value=False;channel.closed=False;channel.exit_status_ready.return_value=False
+            with client.websocket_connect('wss://testserver/api/ops/nodes/1/terminal',headers={'origin':'https://testserver','cookie':cookie}) as ws:
+                ws.send_json({'use_saved':False,'username':'manager','password':'verified-password','save_credentials':True})
+                result=ws.receive_json()
+                self.assertEqual(result['type'],'connected');self.assertTrue(result['credentials_saved'])
+                self.assertEqual(result['server']['status'],'pending');self.assertNotIn('verified-password',str(result))
+            self.assertTrue(closed.wait(2));refresh.assert_called_once_with(1)
+        with self.Session() as db:self.assertEqual(decrypt_password(db.get(Server,1)),'verified-password')

@@ -18,6 +18,12 @@ function accept(data) {
   revision++
 }
 
+function patchServer(patch) {
+  if (!patch || !servers.value.some(s => s.id === patch.id)) return
+  // The snapshot has already aged; retain that age when updating one node.
+  accept(servers.value.map(s => s.id === patch.id ? { ...s, ...patch } : s))
+}
+
 async function fetchOnce() {
   controller?.abort()
   const request = new AbortController()
@@ -70,5 +76,5 @@ export function useServers() {
   onUnmounted(() => {
     if (subscribed && --subscribers === 0) stop()
   })
-  return { servers, subscribe }
+  return { servers, subscribe, patchServer }
 }

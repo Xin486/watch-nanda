@@ -15,6 +15,7 @@ from threading import Lock, Thread
 import time
 from types import SimpleNamespace
 from uuid import uuid4
+from datetime import datetime
 
 import paramiko
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -22,8 +23,10 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from core import ops_auth
 from core.ssh_credentials import decrypt_password, encrypt_password
+from core.status import freshness
 from models.database import SessionLocal
 from models.models import Server
+from worker import tasks
 
 ROOT = Path(__file__).resolve().parents[2]
 router = APIRouter(prefix='/api/ops')
@@ -84,7 +87,8 @@ def configuration(server_id, data):
         if not 1 <= len(password) <= 1024 or any(c in password for c in '\r\n\x00'):
             raise HTTPException(422, '请输入有效的 SSH 用户名和密码')
         return {'server_id': node.id, 'host': node.ip_address or node.hostname,
-                'port': node.ssh_port or 22, 'username': user, 'password': password}
+                'port': node.ssh_port or 22, 'username': user, 'password': password,
+                'expected_user': node.ssh_user, 'expected_credentials': node.ssh_password_encrypted}
 
 
 def connect_ssh(config):
@@ -159,7 +163,7 @@ def ssh_test(server_id: int, data: Connection):
         finally:
             client.close()
         if data.save_credentials and not data.use_saved:
-            save_configuration(config)
+            result.update(save_configuration(config))
         return result
     except Exception as error:
         if isinstance(error, HTTPException):
@@ -171,11 +175,44 @@ def save_configuration(config):
     assert_idle(config['server_id'])
     with SessionLocal() as db:
         node = db.query(Server).filter(Server.id == config['server_id']).with_for_update().first()
-        if not node or (node.ip_address or node.hostname, node.ssh_port or 22) != (config['host'], config['port']):
+        if (not node or not node.is_active
+                or (node.ip_address or node.hostname, node.ssh_port or 22) != (config['host'], config['port'])
+                or ('expected_user' in config and node.ssh_user != config['expected_user'])
+                or ('expected_credentials' in config and node.ssh_password_encrypted != config['expected_credentials'])):
             raise HTTPException(409, '节点连接信息已变化，请刷新页面')
         node.ssh_user = config['username']
         node.ssh_password_encrypted = encrypt_password(config['password'], node)
+        ssh = node.collection_mode == 'ssh'
+        reset = ssh or freshness(node)[0] != 'online'
+        if reset:
+            node.status = 'pending'
+            node.offline_since = None
+            node.last_alert_time = None
+            if ssh:
+                node.latest_status_data = None
+            else:
+                # Retain Agent report IDs/timestamps so replay protection survives
+                # an SSH credential edit; only a new report restores live metrics.
+                node.latest_status_data = {**(node.latest_status_data or {}),
+                    'collection_reset_at': datetime.utcnow().isoformat()+'Z'}
+        patch = {'id': node.id, 'ssh_user': node.ssh_user, 'has_ssh_password': True}
+        if reset:
+            patch.update(status='pending', collection_status='pending', data_age_seconds=None)
         db.commit()
+    queued = False
+    if ssh:
+        try:
+            tasks.request_server_refresh(config['server_id'])
+            queued = True
+        except Exception:
+            # Credentials have committed; the periodic collector will retry.
+            logger.exception('Could not queue refreshed SSH collection for node %s', config['server_id'])
+    message = ('用户名和密码已加密同步；节点待采集，正在重新采集指标。' if ssh and queued else
+               '用户名和密码已加密同步；节点待采集，后台将按周期重试。' if ssh else
+               '用户名和密码已加密同步；节点待采集，等待 Agent 主动上报。' if reset else
+               '用户名和密码已加密同步；继续使用 Agent 主动上报。')
+    return {'credentials_saved': True, 'credentials_message': message, 'server': patch,
+            'collection_reset': reset, 'collection_queued': queued}
 
 
 @router.post('/nodes/{server_id}/trust-host', dependencies=[Depends(require_operator)])
@@ -331,6 +368,7 @@ async def terminal(websocket: WebSocket, server_id: int):
         return
     await websocket.accept()
     client = channel = None
+    saved = {}
     pending_connect = None
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=15)
@@ -341,11 +379,11 @@ async def terminal(websocket: WebSocket, server_id: int):
         pending_connect = asyncio.create_task(asyncio.to_thread(connect_ssh, config))
         client = await asyncio.shield(pending_connect)
         if data.save_credentials and not data.use_saved:
-            await asyncio.to_thread(save_configuration, config)
+            saved = await asyncio.to_thread(save_configuration, config)
         channel = await asyncio.to_thread(client.invoke_shell, term='xterm-256color', width=100, height=28)
         channel.settimeout(0.1)
         config.clear()
-        await websocket.send_json({'type': 'connected'})
+        await websocket.send_json({'type': 'connected', **saved})
         deadline = time.monotonic()+3600
         idle = time.monotonic()
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
@@ -387,7 +425,7 @@ async def terminal(websocket: WebSocket, server_id: int):
     except (Exception, asyncio.CancelledError) as error:
         if not isinstance(error, asyncio.CancelledError):
             try:
-                await websocket.send_json({'type': 'error', **safe_error(error)})
+                await websocket.send_json({'type': 'error', **safe_error(error), **saved})
             except Exception:
                 pass
     finally:

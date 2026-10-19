@@ -13,7 +13,7 @@ function accessHarness({ protocol = 'https:', action, saved = true, selectable =
     computed, reactive, ref, watch, location: { protocol },
     onMounted: fn => mounts.push(fn), onBeforeUnmount: fn => unmounts.push(fn),
     useRoute: () => route, useRouter: () => ({ replace: target => redirects.push(target) }),
-    useServers: () => ({ servers, subscribe() {} }),
+    useServers: () => ({ servers, subscribe() {}, patchServer(patch) { servers.value = servers.value.map(s => s.id === patch.id ? { ...s, ...patch } : s) } }),
     window: { dispatchEvent() {} }, CustomEvent: class {},
     api: {
       opsSession: async () => ({}), opsLogin: async () => ({}), opsLogout: async () => ({}),
@@ -44,7 +44,7 @@ test('existing-node SSH action checks saved credentials once without starting a 
   } finally { h.cleanup() }
 })
 
-test('missing saved password requires manual credentials; temporary password clears on logout', async () => {
+test('manual credentials request verified synchronization and clear on logout', async () => {
   const h = accessHarness({ action: 'check', saved: false })
   try {
     await h.mount()
@@ -55,12 +55,26 @@ test('missing saved password requires manual credentials; temporary password cle
     await nextTick()
     assert.equal(await h.access.testConnection(), true)
     assert.equal(h.calls[0].payload.use_saved, false)
-    assert.equal(h.calls[0].payload.save_credentials, false)
+    assert.equal(h.calls[0].payload.save_credentials, true)
     assert.equal(h.calls[0].payload.username, 'operator')
     await h.access.logout()
     assert.equal(h.access.authenticated, false)
     assert.equal(h.access.credentials.password, '')
   } finally { h.cleanup() }
+})
+
+test('verified credential sync patches the shared node, selects saved credentials and clears plaintext', async () => {
+  const h=accessHarness({saved:false,api:{sshTest:async()=>({data:{ok:true,credentials_saved:true,credentials_message:'synced',server:{id:7,ssh_user:'manager',has_ssh_password:true,status:'pending',collection_status:'pending',data_age_seconds:null}}})}})
+  try {
+    await h.mount()
+    h.access.credentials.username='manager';h.access.credentials.password='temporary-test-only'
+    assert.equal(await h.access.testConnection(),true)
+    await nextTick()
+    assert.equal(h.access.useSaved,true);assert.equal(h.access.credentials.password,'')
+    assert.equal(h.access.node.ssh_user,'manager');assert.equal(h.access.node.status,'pending')
+    assert.equal(h.access.check.credentials_saved,true)
+    assert.equal(h.access.payload().use_saved,true)
+  } finally {h.cleanup()}
 })
 
 test('late SSH result cannot restore credentials or results after logout', async () => {
