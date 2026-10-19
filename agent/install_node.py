@@ -7,11 +7,13 @@ from contextlib import contextmanager
 import fcntl
 import grp
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
 import pwd
 import shutil
+import shlex
 import socket
 import ssl
 import subprocess
@@ -35,6 +37,7 @@ def command(args, *, check=True, timeout=900):
         else:
             env.pop('LD_LIBRARY_PATH',None)
         env['PYINSTALLER_RESET_ENVIRONMENT']='1'
+    env['LC_ALL'] = 'C'
     if args[0]=='apt-get': env.update(DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l')
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,env=env)
     if check and result.returncode:
@@ -84,19 +87,146 @@ def check_owned_service():
     return values.get('LoadState') == 'loaded'
 
 
-def check(stage, url):
+def firewall_state():
+    managers = []
+    if shutil.which('ufw'):
+        result = command(['ufw', 'status'], check=False, timeout=15)
+        if result.returncode:
+            raise RuntimeError('无法读取 UFW 状态，请先核对目标机防火墙')
+        if 'Status: active' in result.stdout:
+            managers.append('ufw')
+    if shutil.which('firewall-cmd'):
+        result = command(['firewall-cmd', '--state'], check=False, timeout=15)
+        if result.returncode == 0:
+            managers.append('firewalld')
+        elif result.returncode not in (252, 1):
+            raise RuntimeError('无法读取 firewalld 状态，请先核对目标机防火墙')
+    return managers
+
+
+def rollback_network(stage):
+    journal = stage/'network-changes.json'
+    regular(journal)
+    if not journal.exists():
+        return {}
+    remaining = json.loads(journal.read_text())
+    while remaining:
+        remove = remaining[-1]
+        if not remove or remove[0] not in ('ufw', 'firewall-cmd'):
+            raise RuntimeError('防火墙恢复记录不正确，请人工核对')
+        result = command(remove, check=False, timeout=30)
+        if result.returncode:
+            raise RuntimeError('新增出站规则未能恢复，请核对节点安装目录中的 network-changes.json')
+        remaining.pop()
+        write_file(journal, json.dumps(remaining).encode())
+    journal.unlink()
+    return {}
+
+
+def allow_report_egress(stage, managers, addresses, port):
+    """Only add endpoint-specific OUTPUT rules, preserving unrelated firewall policy."""
+    if len(managers) > 1:
+        raise RuntimeError('同时启用多个防火墙管理器，请先核对；不会自动覆盖现有策略')
+    added = []
+    journal = stage/'network-changes.json'
+    regular(journal)
+    if journal.exists():
+        raise RuntimeError('已有未完成的防火墙变更，请先恢复')
+
+    def add(create, remove):
+        command(create, timeout=30)
+        added.append(remove)
+        write_file(journal, json.dumps(added).encode())
+
+    try:
+        for address in addresses:
+            tag = 'node-monitor-agent-' + hashlib.sha256(f'{address}:{port}'.encode()).hexdigest()[:12]
+            if managers == ['ufw']:
+                # Do not update comments or ownership of a matching pre-existing rule.
+                rules = command(['ufw', 'show', 'added'], timeout=15).stdout.splitlines()
+                matching = False
+                for line in rules:
+                    tokens = shlex.split(line)
+                    if tokens[:3] != ['ufw', 'allow', 'out'] or 'to' not in tokens:
+                        continue
+                    destination = tokens.index('to')
+                    target = tokens[destination + 1:]
+                    try:
+                        network = ipaddress.ip_network(target[0], strict=False)
+                        same_host = network.prefixlen == network.max_prefixlen and str(network.network_address) == address
+                        source = tokens[tokens.index('from') + 1] if 'from' in tokens else 'any'
+                        any_source = source == 'any' or ipaddress.ip_network(source, strict=False).prefixlen == 0
+                        same_port = len(target) >= 3 and target[1:3] == ['port', str(port)]
+                    except (ValueError, IndexError):
+                        continue
+                    if (same_host and same_port and any_source and 'proto' in tokens
+                            and tokens[tokens.index('proto') + 1] == 'tcp'
+                            and 'on' not in tokens):
+                        matching = True
+                if not matching:
+                    rule = ['allow', 'out', 'proto', 'tcp', 'to', address, 'port', str(port), 'comment', tag]
+                    add(['ufw', 'insert', '1', *rule], ['ufw', '--force', 'delete', *rule])
+            elif managers == ['firewalld']:
+                family = 'ipv4' if ipaddress.ip_address(address).version == 4 else 'ipv6'
+                rule = [family, 'filter', 'OUTPUT', '0', '-d', address, '-p', 'tcp', '--dport', str(port),
+                        '-m', 'comment', '--comment', tag, '-j', 'ACCEPT']
+                # Configure runtime and persistence separately; never reload the host firewall.
+                for scope in ([], ['--permanent']):
+                    prefix = ['firewall-cmd', *scope, '--direct']
+                    result = command([*prefix, '--query-rule', *rule], check=False, timeout=15)
+                    if result.returncode == 1:
+                        add([*prefix, '--add-rule', *rule], [*prefix, '--remove-rule', *rule])
+                    elif result.returncode:
+                        raise RuntimeError('无法核对 firewalld 出站规则，不会覆盖自定义策略')
+        return len(added)
+    except BaseException:
+        if added:
+            rollback_network(stage)
+        raise
+
+
+def check_network(stage, url, configure=False):
+    parsed = urlparse(url)
+    try:
+        port = 443 if parsed.port is None else parsed.port
+    except ValueError:
+        raise RuntimeError('HTTPS 上报端口不合法') from None
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError('需要有效 HTTPS 上报地址')
+    if not 1 <= port <= 65535:
+        raise RuntimeError('HTTPS 上报端口不合法')
+    managers = firewall_state()
+    try:
+        addresses = sorted({str(ipaddress.ip_address(row[4][0])) for row in
+                            socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)})
+    except OSError:
+        raise RuntimeError('上报入口 DNS 解析失败；请先检查节点 DNS 和网络') from None
+    if not addresses or len(addresses) > 8:
+        raise RuntimeError('上报入口解析结果异常，请核对地址')
+    added = allow_report_egress(stage, managers, addresses, port) if configure else 0
+    try:
+        context = ssl.create_default_context(cafile=str(stage/'ca.crt') if (stage/'ca.crt').exists() else None)
+        with socket.create_connection((parsed.hostname, port), timeout=10) as sock:
+            with context.wrap_socket(sock, server_hostname=parsed.hostname):
+                pass
+    except (ssl.SSLError, OSError, ValueError) as error:
+        if configure:
+            rollback_network(stage)
+        if isinstance(error, (ssl.SSLError, ValueError)):
+            raise RuntimeError('HTTPS 证书校验失败，请检查 CA、证书地址和节点时钟；未关闭证书校验') from None
+        raise RuntimeError(f'节点无法出站连接 {parsed.hostname}:{port}/TCP；请检查本机防火墙、回包、路由与上游 ACL，未开放入站端口') from None
+    return {'direction': 'outbound', 'host': parsed.hostname, 'port': port, 'tls_verified': True,
+            'firewalls': managers, 'rules_added': added, 'service_account_verified': False}
+
+
+def check(stage, url, configure_firewall=False):
     check_owned_service()
     if sys.version_info < (3,10):
         raise RuntimeError('节点需要 Python 3.10+；请先升级系统 Python')
-    parsed = urlparse(url)
-    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise RuntimeError('需要有效 HTTPS 上报地址')
-    context = ssl.create_default_context(cafile=str(stage/'ca.crt') if (stage/'ca.crt').exists() else None)
-    with socket.create_connection((parsed.hostname, parsed.port or 443),timeout=10) as sock:
-        with context.wrap_socket(sock,server_hostname=parsed.hostname):
-            pass
+    network = check_network(stage, url, configure_firewall)
     result = {'hostname':socket.gethostname(), 'python_version':'.'.join(map(str,sys.version_info[:3])),
-              'active':active(), 'clock':time.time(), 'venv_available':False, 'account_safe':False, 'config_safe':False}
+              'active':active(), 'clock':time.time(), 'venv_available':False, 'account_safe':False, 'config_safe':False,
+              'network':network}
     try:
         user, group = pwd.getpwnam('node-monitor'), grp.getgrnam('node-monitor')
         groups = {grp.getgrgid(gid).gr_name for gid in os.getgrouplist(user.pw_name,user.pw_gid)}
@@ -253,6 +383,8 @@ def activate(stage, release):
             write_file(backup/name,source.read_bytes())
             metadata['files'].append(name)
     write_file(backup/'state.json',json.dumps(metadata).encode())
+    if (stage/'network-changes.json').exists():
+        write_file(backup/'network-changes.json',(stage/'network-changes.json').read_bytes())
     if exists:
         command(['systemctl','stop',NAME])
     ETC.mkdir(mode=0o750,exist_ok=True)
@@ -286,12 +418,16 @@ def activate(stage, release):
         time.sleep(31)
         result = command(once,check=False,timeout=150)
     if result.returncode:
-        raise RuntimeError('首次 HTTPS 上报失败（证书/网络/时钟/凭据）；将恢复原服务。请检查节点与中心日志')
+        reason = ('上报凭据被拒绝，请重新部署以同步 Token' if 'HTTP 401' in result.stdout else
+                  '上报入口拒绝访问，请核对中心 WAF/访问策略' if 'HTTP 403' in result.stdout else
+                  '采样或时钟校验失败，请核对节点时间' if 'HTTP 422' in result.stdout else
+                  '服务账户无法完成 HTTPS 上报，请检查出站防火墙、回包、证书和服务权限')
+        raise RuntimeError(reason + '；部署未完成，将恢复原服务')
     command(['systemctl','enable','--now',NAME])
     time.sleep(2)
     if not active():
         raise RuntimeError('Agent 服务未持续运行，将恢复原服务')
-    return {'active':True}
+    return {'active':True,'network':{'service_account_verified':True,'report_accepted':True}}
 
 
 def rollback(release):
@@ -345,10 +481,11 @@ def operation_lock():
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('action',choices=['check','prepare','activate','rollback','finish'])
+    parser.add_argument('action',choices=['check','prepare','activate','rollback','finish','network-rollback'])
     parser.add_argument('--stage',type=Path,required=True)
     parser.add_argument('--url')
     parser.add_argument('--release')
+    parser.add_argument('--firewall-mode',choices=['inspect','ensure'],default='inspect')
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         raise RuntimeError('需要 root 或 sudo 权限')
@@ -358,7 +495,9 @@ def main(argv=None):
         raise RuntimeError('临时目录权限或路径不正确')
     with operation_lock():
         if args.action == 'check':
-            return check(stage,args.url)
+            return check(stage,args.url,args.firewall_mode == 'ensure')
+        if args.action == 'network-rollback':
+            return rollback_network(stage)
         if args.action == 'prepare':
             return prepare(stage)
         release = release_path(args.release)

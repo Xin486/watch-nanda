@@ -1,4 +1,4 @@
-"""ORM 模型定义（对应 monitor_db.sql 中的 4 张表）"""
+"""ORM 模型定义（对应 monitor_db.sql 中的五张业务表）。"""
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.sql import func
 
@@ -21,7 +21,7 @@ class Server(Base):
     is_active = Column(Boolean, default=True)
     email_alert_enabled = Column(Boolean, nullable=False, default=True, server_default='1')
 
-    # ---- 在线状态（替代 Redis 的核心字段）----
+    # ---- 采集状态与实时数据 ----
     status = Column(String(20), default="offline")          # online / offline
     last_online = Column(DateTime, nullable=True)           # 最近一次采集成功时间
     offline_since = Column(DateTime, nullable=True)         # 首次离线时间（告警计算用）
@@ -30,7 +30,7 @@ class Server(Base):
     latest_status_data = Column(JSON, nullable=True)
 
     # ---- 任务辅助字段 ----
-    locked_until = Column(DateTime, nullable=True)          # 预留：任务防并发锁（时间戳）
+    locked_until = Column(DateTime, nullable=True)          # 兼容现有表结构；任务去重由 worker 队列维护
     last_alert_time = Column(DateTime, nullable=True)       # 上次发送告警邮件的时间
     created_at = Column(DateTime, default=func.now())
 

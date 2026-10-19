@@ -14,19 +14,21 @@ env/
 .env
 .env.local
 
-# 运行时产物（日志、调度残留文件）
+# 运行时日志
 *.log
 nohup.out
-celerybeat-schedule
 
 # Agent 节点凭据（签发后仅交给对应节点）
 agent-*.json
 agent/config.json
 
 # 本地隔离验证依赖
-.tmp-backend-test-deps/
+/.tmp*
 .venv/
 .runtime/
+
+# 本地分析报告、部署审计与截图
+/outputs/
 
 # 编辑器及系统文件
 .vscode/

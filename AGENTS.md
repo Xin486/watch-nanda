@@ -1,0 +1,137 @@
+# watch-nanda 项目前置提示词
+
+本文件适用于整个仓库。开始任务先阅读本文件；详细架构、Git 进度和有日期的生产核对结果见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)。以实际代码、Git 差异和现场配置为准，不把历史记录当成实时状态。
+
+## 项目定位与工作方式
+
+- 这是南大服务器监控平台：监控 CPU、内存、NVIDIA GPU、功耗和进程，提供节点控制台、算力大屏、历史曲线、邮件提醒及网页 SSH 运维。
+- 技术栈为 Vue 3 / Vite / ECharts / xterm.js，FastAPI / SQLAlchemy / APScheduler / Paramiko，以及 MySQL。当前没有 Redis 或 Celery；`backend/worker/` 是进程内线程池和调度器。
+- 本地开发环境可以是 Windows，生产和 Agent 运行环境是 Linux/systemd。Python 支持范围按初始化脚本为 3.10–3.12，Node.js 为 18+。
+- 开始修改前检查 `git status --short`、当前分支、近期 `git log` 和相关 `git diff`。2026-10-19 核对的开发/生产分支是 `feat/sse-realtime-push`，不要据此永久假定分支和提交不变。
+- 保留用户已有修改和有价值的分析、审计产物。最终报告统一放在 `outputs/reports/`，截图和运维审计保留在 `outputs/`，不加入业务提交。用户要求清理时，可删除已确认无运行/验证用途的临时输入、一次性脚本和缓存；不能仅因未跟踪就删除最终报告或审计记录。
+
+## 项目结构与职责
+
+```text
+watch-nanda/
+├── AGENTS.md                       # 项目前置提示词及持续维护规则
+├── README.md                       # 使用、部署、功能说明
+├── docs/PROJECT_CONTEXT.md         # 架构、改动进度与生产核对快照
+├── docs/DEPLOYMENT.md              # 当前生产入口、升级、迁移检查及恢复
+├── setup.sh                        # 初始化入口；依赖、数据库、迁移、构建
+├── start.sh / stop.sh               # 调用生命周期管理器
+├── install-agent.sh                # 中心侧交互安装 Agent 的入口
+├── monitor_db.sql                  # 新库结构；不能用于覆盖已有生产库
+├── backend/
+│   ├── main.py                     # REST、Agent 接收、SSE、运维路由挂载
+│   ├── core/
+│   │   ├── config.py               # 环境变量/.env 配置与新鲜度阈值
+│   │   ├── status.py               # REST/SSE/告警/历史共用状态计算
+│   │   ├── history.py              # 历史查询、有效样本统计、北京时间日聚合
+│   │   ├── agent.py                # 上报模型、Token 校验、防重放、入库
+│   │   ├── agent_health.py         # Agent 最近有效上报的只读诊断
+│   │   ├── ssh_credentials.py      # SSH 密码加密、解密与连接身份绑定
+│   │   ├── ops_auth.py             # 运维口令、会话、同源与 HTTPS 校验
+│   │   └── operations.py           # SSH 检测、指纹信任、WSS 终端、部署任务
+│   ├── models/database.py          # 数据库引擎与 Session
+│   ├── models/models.py            # servers/server_stats/agent_credentials/
+│   │                              # email_configs/alert_configs 五张表
+│   ├── worker/tasks.py             # SSH 采集、去重队列、落历史、邮件调度
+│   ├── migrate_agent.py            # 幂等增量迁移；--check/--require-ready 只读
+│   ├── manage_agent.py             # 本机管理员签发/撤销 Agent Token
+│   ├── manage_ssh.py               # SSH 密码加密密钥及节点凭据管理
+│   ├── manage_ops.py               # 设置独立网页运维口令
+│   ├── agent_job.py                # 网页部署的安装器子进程入口
+│   ├── .env.example                # 配置模板；真实 .env 不入库
+│   ├── requirements*.txt           # 运行/测试依赖
+│   └── tests/                     # SQLite、模拟 SSH/SMTP 及脚本回归
+├── frontend/
+│   ├── src/main.js / App.vue       # 初始化与全局壳层
+│   ├── src/router/index.js         # 页面路由与旧书签重定向
+│   ├── src/api.js                  # 同源 HTTPS API 封装
+│   ├── src/composables/            # useServers/useNodeAccess/useTheme
+│   ├── src/views/                  # Dashboard、BigScreen、History、Settings、
+│   │                              # Cleanup、NodeOperations、AgentDeploy、AgentRedeploy
+│   ├── src/components/             # 节点详情/新增、上报诊断、连接面板、
+│   │                              # 运维布局、远程终端、铃铛、图标及主题开关
+│   ├── src/utils/                  # 状态/指标、历史图表、主题、HTTPS 工具
+│   ├── src/styles/                 # 主题变量与运维共用样式
+│   ├── tests/*.test.mjs            # Node 内置测试运行器
+│   ├── vite.config.js              # HTTPS 开发/预览、API 与 WebSocket 代理
+│   └── package*.json               # 依赖与锁文件
+├── agent/
+│   ├── monitor_agent.py            # 节点本机采样与 HTTPS 主动上报
+│   ├── install_node.py             # 节点侧 release 准备/激活/回滚
+│   ├── build.sh / build_bundle.py  # 含 Python 运行时的 Linux 独立包
+│   ├── node-monitor-agent.service  # 低权限常驻服务
+│   ├── config.example.json         # 不含真实 Token 的配置模板
+│   └── README.md                   # 安装、协议、验证与回退
+├── scripts/
+│   ├── initialize.py              # 配置准备、数据库准备、增量结构初始化
+│   ├── lifecycle.py               # systemd/后台模式识别、归属检查、健康检查
+│   └── install_agent.py           # 中心 SSH 安装编排、包校验及回滚
+└── deploy/production/             # 基础 Nginx、雷池控制台配置
+```
+
+## 必须保持的业务约定
+
+- SSH 每 60 秒采集，Agent 默认每 300 秒上报；历史每 10 分钟保存，SSE 每 10 秒只读推送。页面刷新和 SSE 订阅不能触发全量 SSH。
+- 实时指标在 `servers.latest_status_data`；历史在 `server_stats`。`status.py` 统一计算 `online/offline/stale/pending`，前端 `serverStatus.js` 继续计算断网期间的数据年龄。
+- SSH 默认 180 秒过期；Agent 默认 720 秒过期、960 秒失联，实际配置可覆盖。Agent 采样时间与服务端接收时间分开使用，重复/乱序上报不能刷新在线时间。
+- `useServers` 是共享单例：SSE 为主、REST 首次加载和断流兜底。保留乱序响应保护、请求取消、订阅清理和编辑表单保护。
+- 前端经同源 HTTPS 访问 API，开发/预览也通过 Vite 代理；后端不再维护旧的通配 CORS 配置。后端通过启动脚本或 Uvicorn CLI 启动，只监听回环地址，不提供 `python main.py` 的对外调试入口。
+- 历史 1–7 天返回原始快照，超过 7 天按北京时间自然日聚合。缺失、离线、过期和无 GPU 保留缺口，不伪造为 0；平均值按有效原始样本加权。显存利用率、GPU 计算利用率和功率是不同指标。
+- 已有节点运维页是 `/operations` 或 `/nodes/:id/operations`，只做连接检查和终端。首次部署页为 `/servers/new/:id/agent`；已有 Agent 的上报检查异常结果提供 `/nodes/:id/agent/redeploy` 独立修复页，固定目标、复用运维认证与部署逻辑，不带终端；旧 `/agents`、`/nodes/:id/agent` 仍重定向到运维。
+- 手动 SSH 凭据在验证成功后按页面请求加密同步；失败不能覆盖已存凭据。SSH 节点先进入待采集并重新排队，采集成功才在线；Agent 节点保留采集模式和 Token。配置变化后丢弃旧采集结果。
+- Agent 健康检查只查平台上报状态，不连接 SSH、不重启节点、不轮换 Token。节点邮件铃铛同时控制离线/恢复提醒，并受全局开关控制。
+- 重部署使用受运维认证保护的 `/api/ops/nodes/:id/redeploy`，仅适用于已有 Agent 节点；必须主动点击才开始，保留节点 ID、分组和历史，更新 Token/程序，失败恢复原凭据与服务。提交时及签发凭据前均校验采集模式，不能误把已切回 SSH 的节点重新切换。
+- 安装器检查并验证节点到上报入口的出站 TCP/TLS；UFW/firewalld 仅添加目的 IP/端口的出站规则及持久配置，不开放入站、不关闭或重载防火墙、不覆盖其他规则。`--check-only` 只检查；部署失败恢复本次新增规则，无法确认远端恢复时保留规则及安装记录供核对。自定义 nftables/iptables 或上游 ACL 仍阻断时必须失败提示，不能伪报成功。
+- 安装包必须包含当前 `install_node.py`；修改安装器后重新构建匹配的 Linux 独立包。成功判定仍要求以 `node-monitor` 服务账户完成真实 HTTPS 上报并确认常驻服务运行，root 的 TLS 检查通过不能单独当作部署成功。
+- 管理页共用 `styles/theme.css`、`useTheme` 和主题工具；图表切换主题保留缩放和图例选择。远程终端保持深色；算力大屏保留其现有独立展示设计。
+- 后端调度、运维会话、部署任务与终端注册表在单进程内；不要直接增加多个 Uvicorn worker，否则会重复调度且状态不共享。部署任务中心并行上限为 2，同节点最多 1 个。
+
+## 生产环境与部署边界
+
+- 主机：`192.168.1.24`；项目目录：`/home/test/Downloads/watch-nanda/monitor_platform`。2026-10-19 只读核对使用 root 登录；密码仅使用用户当次提供的凭据，不写入文档、命令文件、日志或 Git。
+- 平台 `https://192.168.1.24`；雷池控制台 `https://192.168.1.24:9443`。管理入口允许 `192.168.1.0/24`，包括 SD-WAN SNAT 网关 `.199`，不得再次单独拒绝该网关。外部入口只开放 Agent 上报路径。
+- 生产流量为 Nginx HTTPS 443 → 雷池 8088 → 回环 Nginx 18080 → 静态前端或回环 FastAPI 7980。前端发布目录为 `/var/www/watch-nanda`；后端由 `watch-nanda-backend.service` 管理。
+- 2026-10-19 实际后端使用 `/usr/bin/python3`，尚无 `backend/.venv`；`setup.sh` 新式部署会创建 venv。升级前先核对 systemd 实际 ExecStart，不要假定仓库模板等于现场。
+- systemd 服务由 `scripts/lifecycle.py` 生成，没有独立静态后端服务模板；表和索引由 `scripts/initialize.py` 幂等补齐。升级与恢复按 `docs/DEPLOYMENT.md` 执行；依赖、表结构与服务配置未改变时，可按其中的小范围发布流程保留现场环境，仅更新源码、静态资源、匹配的 Agent 包并重启后端。
+- 7980 仅监听 `127.0.0.1`，旧 80/3000 未开放；前端/API/SSE 同源 HTTPS，终端使用 WSS。回环代理和本机健康检查可用 HTTP。
+- `deploy/production/nginx.conf` 是基础配置，不是当前完整 WAF 配置。保留现场 `watch-nanda-managed-root` 归属标记、WAF 代理、访问策略、SSE 无缓冲和 WebSocket Upgrade；不得直接用基础模板覆盖现场。
+- 雷池控制台代理为 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` → `https://127.0.0.1:19443`；证书与 CA 在 `/etc/node-monitor/tls/`。
+- MySQL 库为 `monitor_db`。已有库使用 `migrate_agent.py` 增量迁移，不重新导入 `monitor_db.sql`，不重建历史表，不删除数据卷，保留节点 ID 和历史记录。
+- SSH 只用密码与严格主机指纹验证，禁用私钥和 ssh-agent 回退。密码使用 Fernet；默认密钥 `/etc/node-monitor/ssh-credentials.key`。运维口令为独立 PBKDF2 摘要，默认 `/etc/node-monitor/ops-password.json`，不跟随系统密码变化。
+- Agent 数据库只存 Token 摘要；节点配置含真实 Token，不入库、不输出到聊天。Agent 只上报指标，无远程命令或自动更新通道；网页部署优先要求独立运行包，不能因缺包静默改用系统 Python 安装。
+- 生产操作按用户授权范围执行。项目理解、检查和文档维护本身不意味着部署、重启、运行迁移、轮换凭据或批量改节点；实际发布前核对现场差异与恢复办法。
+
+## 验证方式
+
+按变更范围选择验证，不为纯文档改动修改业务代码或启动生产服务：
+
+```bash
+# 后端：先在隔离环境安装 backend/requirements-test.txt；测试使用 SQLite/模拟连接
+python3 -m unittest discover -s backend/tests -v
+
+# 前端：在 frontend/ 下执行，使用已有锁文件安装依赖
+node --test tests/*.test.mjs
+npm run build
+
+# 生产结构只读检查：在实际后端 Python 环境与 backend/ 目录下执行
+python3 migrate_agent.py --check
+```
+
+Linux 专用的 systemd、权限、Shell、Agent 安装/回滚检查需 Linux 环境，Windows 上的通过结果不能替代它们。MySQL 专项脚本为 `backend/tests/check_history_mysql.py`，只操作连接内临时表，仍应先确认所连环境和执行范围。
+
+## 每次改动后的前置提示词检查（必须执行）
+
+每次完成一轮修改，在交付前查看最终差异，逐项判断：
+
+1. 是否新增、删除、移动目录、模块、页面、路由、脚本或测试入口？
+2. 是否改变技术栈、依赖环境、配置项、接口约定、数据模型、采集时序、状态计算或指标口径？
+3. 是否改变登录/凭据、网络入口、WAF、证书、部署路径、服务管理、发布/回退方式？
+4. 是否使本文件、README、架构说明或迁移说明中的描述过时？
+
+任一项成立，就在同一轮修改中同步更新本文件相关段落，并按需更新 `docs/PROJECT_CONTEXT.md`、`README.md` 或 Agent 文档；删除失效描述，避免只追加互相矛盾的说明。生产快照必须注明核对日期，不能只根据本地改动宣布生产已更新。
+
+若仅修正文案、样式或内部实现且上述约定均未改变，可不改本文件，但必须完成检查。在最终交付中简短说明“前置提示词已同步”或“已检查，前置提示词无需更新”，并列出实际验证和未验证部分。不要为了标记检查而每次改写日期、提交号或易变节点数量，也不要把本文件变成逐提交流水账。

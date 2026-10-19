@@ -5,8 +5,8 @@ Node Monitor 后端 API 入口
 1. 提供服务器节点管理、历史负载查询、告警/邮件配置等 REST 接口
 2. 启动时自动拉起 APScheduler 后台采集调度器（采集逻辑见 worker/tasks.py）
 
-启动方式（在 backend 目录下执行）：
-    uvicorn main:app --host 0.0.0.0 --port 7980
+启动方式（在 backend 目录下执行；对外入口使用 HTTPS 代理）：
+    uvicorn main:app --host 127.0.0.1 --port 7980
 """
 import json
 import time
@@ -16,9 +16,7 @@ from typing import Optional, Literal
 
 import asyncio
 
-import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError, SecretStr
 from fastapi.exceptions import RequestValidationError
@@ -62,19 +60,10 @@ def password_ciphertext(secret, server, request):
     except OSError:
         raise HTTPException(503, '请先在服务器初始化 SSH 凭据加密密钥') from None
 
-# 允许前端 (Vite 3000 端口) 跨域访问
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.on_event("startup")
 def startup_event():
-    """FastAPI 启动时立即执行一次全量采集，再拉起后台调度器"""
+    """启动调度器并提交首轮 SSH 采集，API 不等待网络任务完成。"""
     start_scheduler()
     monitor_once()  # 同一任务队列，后台采集，API 不等待 SSH
 
@@ -139,7 +128,7 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
     """获取服务器列表及实时缓存状态（纯 MySQL 实现，无 Redis）
 
     实时数据存放在 servers.latest_status_data (JSON 字段)，
-    由后台采集任务每分钟刷新一次。
+    由 SSH 后台采集或 Agent 主动上报更新。
     """
     query = db.query(Server).filter(Server.is_active == True)  # noqa: E712
     if group:
@@ -163,7 +152,7 @@ def get_agent_health(server_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/servers/add")
 def add_server(data: ServerCreate, db: Session = Depends(get_db), request: Request = None):
-    """新增一台服务器（默认离线，等待后台调度器首次采集）"""
+    """新增节点，等待 SSH 首次采集或 Agent 部署上报。"""
     new_server = Server(
         hostname=data.hostname,
         ip_address=data.ip_address,
@@ -463,10 +452,3 @@ def get_market_kline(symbol: str = "90.BK1036", klt: int = 101, lmt: int = 120):
         return payload
     except Exception as e:
         return {"error": str(e), "name": "", "code": symbol, "klines": [], "latest": None}
-
-
-# ---------------------------------------------------------------------------
-# 本地调试入口（生产环境请使用 uvicorn 命令启动）
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7980)

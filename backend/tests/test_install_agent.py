@@ -127,21 +127,46 @@ class InstallerTests(unittest.TestCase):
         stack,_,_=self.invoke(remote)
         with stack,self.assertRaises(installer.InstallError): installer.main()
         self.assertIn('rollback',[c.args[1] for c in remote.helper.call_args_list])
+        self.assertIn('network-rollback',[c.args[1] for c in remote.helper.call_args_list])
         with self.Session() as db:
             self.assertEqual(db.get(Server,1).collection_mode,'ssh')
             self.assertEqual(db.get(Server,1).latest_status_data['cpu_percent'],42)
             self.assertIsNone(db.get(AgentCredential,1))
 
-    def test_batch_ignores_legacy_key_option_and_rejects_unknown_hosts(self):
+    def test_batch_uses_password_only_and_rejects_unknown_hosts(self):
         import paramiko
         remote,_,_=self.fake()
         stack,_,client=self.invoke(remote)
         with stack:
-            result=installer.install(installer.parse_args(),'test-only-ssh-secret',use_existing_keys=True,known_hosts_only=True)
+            result=installer.install(installer.parse_args(),'test-only-ssh-secret',known_hosts_only=True)
         self.assertEqual(result['status'],'installed')
         self.assertFalse(client.connect.call_args.kwargs['look_for_keys'])
         self.assertFalse(client.connect.call_args.kwargs['allow_agent'])
         self.assertIsInstance(client.set_missing_host_key_policy.call_args.args[0],paramiko.RejectPolicy)
+
+    def test_reinstall_preserves_existing_node_and_history_and_does_not_skip_healthy_agent(self):
+        with self.Session() as db:
+            node=db.get(Server,1);node.collection_mode='agent'
+            db.add(AgentCredential(server_id=1,token_hash='old-token-digest'))
+            db.add(ServerStats(server_id=1,cpu_percent=42));db.commit()
+        remote,_,_=self.fake();stack,_,_=self.invoke(remote)
+        with stack,patch.object(installer,'already_healthy',return_value=True):
+            args=installer.parse_args();args.server_id=1;args.reinstall=True
+            result=installer.install(args,'test-only-ssh-secret')
+        self.assertEqual(result['status'],'installed')
+        with self.Session() as db:
+            self.assertEqual(db.query(Server).count(),1)
+            self.assertEqual(db.query(ServerStats).count(),1)
+            self.assertEqual(db.get(Server,1).collection_mode,'agent')
+            self.assertNotEqual(db.get(AgentCredential,1).token_hash,'old-token-digest')
+
+    def test_reinstall_refuses_ssh_mode_without_connecting_or_changing_credentials(self):
+        remote,_,_=self.fake();stack,_,client=self.invoke(remote)
+        with stack,self.assertRaises(installer.InstallError):
+            args=installer.parse_args();args.server_id=1;args.reinstall=True
+            installer.install(args,'test-only-ssh-secret')
+        client.connect.assert_not_called()
+        with self.Session() as db:self.assertIsNone(db.get(AgentCredential,1))
 
     def test_uncertain_remote_rollback_preserves_new_credentials(self):
         remote,_,helper=self.fake()
@@ -186,7 +211,7 @@ class InstallerTests(unittest.TestCase):
         remote,check,_=self.fake();check['clock']-=1000
         stack,_,_=self.invoke(remote)
         with stack,self.assertRaises(installer.InstallError): installer.main()
-        self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check'])
+        self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check','network-rollback'])
 
     def test_selinux_label_failure_rolls_back_preparation_before_issuing_token(self):
         remote,_,_=self.fake()
@@ -199,7 +224,7 @@ class InstallerTests(unittest.TestCase):
         stack,_,_=self.invoke(remote)
         with stack,self.assertRaises(installer.InstallError):
             installer.main()
-        self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check','prepare','rollback'])
+        self.assertEqual([c.args[1] for c in remote.helper.call_args_list],['check','prepare','rollback','network-rollback'])
         remote.run.assert_any_call('if command -v restorecon >/dev/null 2>&1; then restorecon -R -- /opt/node-monitor-agent/releases/'+'a'*32+'; fi',root=True)
         with self.Session() as db:
             self.assertEqual(db.get(Server,1).collection_mode,'ssh')

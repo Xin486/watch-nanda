@@ -1,9 +1,9 @@
 # 节点主动上报
 
-192.168.1.24 的当前结构核对与生产执行顺序见 [生产迁移说明](PRODUCTION_MIGRATION.md)。
+监控中心升级、迁移检查和当前生产入口见 [部署说明](../docs/DEPLOYMENT.md)。
 
 本地读取 CPU、内存和 NVIDIA GPU 指标，默认每 300 秒上报一次，加 0–15 秒错峰。
-没有监听端口，不使用 SSH 密钥，不接受远程命令或自动更新。节点仅需访问监控中心 HTTPS 443。
+没有监听端口，不使用 SSH 密钥，不接受远程命令或自动更新。节点仅需访问对应的 HTTPS 上报入口（内网 443 / 公网 59443）。
 CPU 为采集时 1 秒窗口的利用率；其余指标为当时快照，不是过去 5 分钟的平均值或峰值。
 
 ## 独立运行包（推荐）
@@ -55,6 +55,30 @@ sudo bash install-agent.sh --ip 172.16.66.177 --user test --port 22 --check-only
 ```
 
 `--check-only` 仅检查 SSH/sudo、Linux/systemd、Python、节点时钟、TLS 证书及已有 Agent 状态，不安装系统包、不修改节点记录、不签发 Token。
+
+### 出站网络与目标机防火墙
+
+Agent 不监听端口。默认部署先核对目标机防火墙，并为启用的 UFW/firewalld 补充仅到上报入口 IP 和 TCP 端口的出站放行规则；内网为 `192.168.1.24:443`，公网为 `114.212.165.149:59443`。规则同时持久化，不开放节点入站端口、不关闭/清空/重载防火墙，也不更改其他规则。已有相同规则保留；同时启用多个管理器时停止并提示人工核对。
+
+安装器验证 TCP/TLS 后，还必须以 `node-monitor` 服务账户完成一次真实 HTTPS 上报并确认常驻服务正常，才报告成功。证书失败、出站阻断、中心拒绝和时钟/采样错误分别提示；自定义 nftables/iptables、服务账户专属策略或上游 ACL 仍可阻断连接，这时部署会失败，不能用 root 的握手通过代替服务账户验证。
+
+`--check-only` 不添加防火墙规则。实际部署失败会恢复本次新增规则，保留管理员原有规则；无法确认远端服务回滚时保留当前网络配置和安装记录，避免中断可能仍在运行的新 Agent。受保护的 `network-changes.json` 记录新增规则的恢复命令，成功激活时也保留在该 release 的 `.rollback` 中。域名入口按检查时解析的地址放行，地址改变时需重新检查网络配置。
+
+规则语法依据：[UFW 手册](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html)、[firewalld direct 接口](https://firewalld.org/documentation/man-pages/firewalld.direct.html)。不对未知自定义策略执行全局放行。
+
+### 已有 Agent 重新部署
+
+在节点配置中点击「检测 Agent 上报可用性」，异常结果下方进入独立的「Agent 重部署」页面。页面固定节点，先完成运维登录和 SSH 身份检查，再主动点击重新部署；不会因为打开页面或检测失败自动执行安装。
+
+也可在中心明确指定已有 Agent 节点：
+
+```bash
+sudo bash install-agent.sh --ip <节点IP> --port <SSH端口> --user <SSH用户> --server-id <已有节点ID> --reinstall
+```
+
+重部署保留节点 ID、分组和历史，即使旧版本仍显示健康也执行程序与凭据更新；不能用于新增节点或已经切回 SSH 的节点。只读检查保持 `--check-only`。安装器源码变化后，需先执行 `bash agent/build.sh` 构建与当前源码一致的独立包；网页不会使用不匹配的旧包。
+### 上报入口与运行要求
+
 `192.168.1.0/24` 中的目标默认上报到 `https://192.168.1.24/api/agent/report`，其余目标默认使用 `https://114.212.165.149:59443/api/agent/report`。
 两个入口均自动传输 `/etc/node-monitor/tls/ca.crt` 公钥证书，保留证书和 IP 校验；不会传输中心 CA 或服务器私钥。其他中心可通过 `--url` 指定：
 
@@ -84,8 +108,8 @@ sudo bash install-agent.sh --url https://10.0.0.24/api/agent/report --ca-file /p
 python3 migrate_agent.py
 ```
 
-此操作幂等：为 servers 增加 collection_mode，创建 agent_credentials。
-已有节点保持 ssh，不改变节点 ID 或历史记录。全新数据库使用更新后的 monitor_db.sql。
+此操作幂等：检查并补齐采集方式、Agent 凭据表、加密 SSH 密码和节点提醒字段。
+不改变已有采集方式、节点 ID 或历史记录。全新数据库由 setup.sh 初始化。
 完成后启动新后端；不要仅启动新代码而跳过迁移。
 
 新增节点默认为主动上报；现有节点可以在详情里切换采集方式。切换模式会清空实时缓存并撤销旧 Token，历史保留。

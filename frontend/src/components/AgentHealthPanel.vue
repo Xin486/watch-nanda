@@ -10,6 +10,10 @@
       <dl><div><dt>最近接收</dt><dd>{{ timeLabel(result.last_received_at) }}</dd></div><div><dt>最近采样</dt><dd>{{ timeLabel(result.last_sampled_at) }}</dd></div></dl>
     </div>
     <p v-if="error" class="health-error" role="alert">{{ error }}</p>
+    <div v-if="result && result.status !== 'online' && !hideRedeploy" class="redeploy-entry">
+      <div><strong>修复或重新部署 Agent</strong><p>先检查节点网络、证书和时钟。需要修复采集服务时，可在独立页面重新部署，保留节点和历史数据。</p></div>
+      <router-link class="health-button" :to="`/nodes/${serverId}/agent/redeploy`">进入 Agent 重部署 ↗</router-link>
+    </div>
     <div class="service-hints"><strong>在该节点服务器上检查</strong><div><span>服务状态</span><code>sudo systemctl status node-monitor-agent --no-pager</code></div><div><span>最近日志</span><code>sudo journalctl -u node-monitor-agent -n 30 --no-pager</code></div><p>检测依据平台已接收的数据，不会登录或重启节点。异常时可在运维命令行执行以上命令。</p></div>
   </section>
 </template>
@@ -18,7 +22,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { api } from '../api'
 
-const props = defineProps({ serverId: { type: Number, required: true } })
+const props = defineProps({ serverId: { type: Number, required: true }, hideRedeploy: { type: Boolean, default: false } })
 const checking = ref(false), result = ref(null), error = ref('')
 const labels = { online: '上报正常', stale: '上报延迟', offline: '上报不可用', pending: '待上报', unconfigured: '未配置上报凭据' }
 let controller, disposed = false
@@ -39,4 +43,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort() })
 
 <style scoped>
 .agent-health{margin-top:20px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}.health-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:17px 18px;background:var(--surface-soft)}.health-heading h3{margin:0;font-size:13px;color:var(--text)}.health-heading p{margin:6px 0 0;color:var(--text-muted);font-size:11px;line-height:1.6}.health-button{flex-shrink:0;border:1px solid var(--accent-border);border-radius:8px;padding:9px 12px;background:var(--surface);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer}.health-button:hover{background:var(--accent-soft)}.health-button:disabled{opacity:.55;cursor:wait}.health-button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.health-result{margin:14px 18px;padding:12px 14px;border-radius:8px;background:var(--warning-bg);color:var(--warning)}.health-result.online{background:var(--success-bg);color:var(--success)}.health-result.offline,.health-result.unconfigured{background:var(--danger-bg);color:var(--danger)}.result-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.result-heading strong{font-size:12px}.result-heading small{font-size:10px;opacity:.8}.health-result p{margin:8px 0;font-size:12px;line-height:1.7}.health-result dl{display:flex;gap:22px;flex-wrap:wrap;margin:8px 0 0;font-size:11px}.health-result dl>div{display:flex;gap:8px}.health-result dt{opacity:.8}.health-result dd{margin:0}.health-error{margin:14px 18px;color:var(--danger);font-size:12px}.service-hints{padding:14px 18px;border-top:1px solid var(--border-soft);color:var(--text-muted)}.service-hints>strong{display:block;font-size:11px;font-weight:600;margin-bottom:9px}.service-hints>div{display:flex;gap:12px;align-items:baseline;margin:7px 0;font-size:11px}.service-hints span{flex-shrink:0}.service-hints code{font:11px/1.6 ui-monospace,monospace;overflow-wrap:anywhere;color:var(--text-secondary);user-select:all}.service-hints p{font-size:11px;line-height:1.6;margin:10px 0 0;color:var(--text-muted)}@media(max-width:700px){.health-heading,.result-heading{align-items:flex-start;flex-direction:column}.health-button{width:100%}.service-hints>div{flex-direction:column;gap:2px}}
+</style>
+<style scoped>
+.redeploy-entry{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-top:1px solid var(--border-soft)}.redeploy-entry strong{color:var(--text);font-size:12px}.redeploy-entry p{color:var(--text-muted);font-size:11px;line-height:1.7;margin:7px 0 0}.redeploy-entry a{text-decoration:none;white-space:nowrap}@media(max-width:700px){.redeploy-entry{align-items:stretch;flex-direction:column}.redeploy-entry a{text-align:center;box-sizing:border-box}}
 </style>

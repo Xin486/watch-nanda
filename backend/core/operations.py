@@ -13,13 +13,12 @@ import subprocess
 import sys
 from threading import Lock, Thread
 import time
-from types import SimpleNamespace
 from uuid import uuid4
 from datetime import datetime
 
 import paramiko
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from core import ops_auth
 from core.ssh_credentials import decrypt_password, encrypt_password
@@ -304,7 +303,23 @@ def job_payload(job):
 
 @router.post('/nodes/{server_id}/deploy', dependencies=[Depends(require_operator)])
 def deploy(server_id: int, data: Connection):
+    return start_deployment(server_id, data)
+
+
+@router.post('/nodes/{server_id}/redeploy', dependencies=[Depends(require_operator)])
+def redeploy(server_id: int, data: Connection):
+    with SessionLocal() as db:
+        node = db.get(Server, server_id)
+        if node is None or not node.is_active:
+            raise HTTPException(404, '节点不存在或已禁用')
+        if node.collection_mode != 'agent':
+            raise HTTPException(409, '该节点不是 Agent 采集，无法从此页面重新部署')
+    return start_deployment(server_id, data, reinstall=True)
+
+
+def start_deployment(server_id, data, *, reinstall=False):
     config = configuration(server_id, data)
+    config['reinstall'] = reinstall
     if data.save_credentials and not data.use_saved:
         # Verify before persisting manually submitted credentials.
         client = connect_ssh(config)
@@ -322,8 +337,9 @@ def deploy(server_id: int, data: Connection):
             old = next((key for key, value in jobs.items() if value['status'] != 'running'), None)
             if old:
                 del jobs[old]
-        job = {'id': str(uuid4()), 'server_id': server_id, 'status': 'running', 'logs': [],
-               'message': '正在检查 SSH、sudo、时钟、证书及独立安装包', 'created_at': time.time()}
+        job = {'id': str(uuid4()), 'server_id': server_id, 'kind': 'redeploy' if reinstall else 'deploy',
+               'status': 'running', 'logs': [],
+               'message': '正在检查 SSH、sudo、时钟、出站防火墙、证书及独立安装包', 'created_at': time.time()}
         jobs[job['id']], active_jobs[server_id] = job, job['id']
     try:
         workers.submit(run_deployment, job, config)

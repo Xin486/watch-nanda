@@ -1,7 +1,7 @@
 # Node Monitor 服务器监控平台
 
 支持节点主动通过 HTTPS 上报，无需 SSH 免密密钥。新节点默认每 5 分钟上报、每 10 分钟保存历史；已有节点继续 SSH 采集，可逐台迁移。
-已有数据库升级前必须执行 `backend/migrate_agent.py`。详细接入、Token 签发和回退步骤见 [Agent 接入说明](agent/README.md)。
+已有库通过初始化脚本增量升级。生产升级见 [部署说明](docs/DEPLOYMENT.md)，节点接入、Token 签发和回退见 [Agent 接入说明](agent/README.md)。
 
 通过节点 HTTPS 主动上报或已有 SSH 采集获取 CPU / 内存 / GPU 数据，
 提供控制台卡片、算力大屏、历史曲线与离线邮件告警。
@@ -30,13 +30,11 @@ bash start.sh    # 后台启动；重复执行不会新增实例
 已有本地/远程 MySQL 8+ 均直接连接，不需要 Docker 或 mysql 命令行客户端；仅无本地数据库时自动使用 Docker 创建 MySQL，默认只绑定回环地址。
 不会删除或重建原有数据卷，也不会用 `--force` 忽略 SQL 错误。
 
-前置环境为 Linux、Python 3.10–3.12（包含 venv）、Node.js 18+ 和 npm。
-Ubuntu/Debian 可安装对应版本的 Python 与 venv；Node 版本不满足时先安装支持的 Node.js，再运行 setup。
 Python 依赖安装到 `backend/.venv`，前端使用锁文件执行 `npm ci`。可用 `PIP_INDEX_URL` 指定镜像。
 
 生产服务托管及升级：
 
-旧版本曾跟踪 `backend/.env`，首次更新到本版本前应备份该文件，拉取代码后恢复为权限 600，避免 Git 的删除记录移除生产配置。
+先按 [部署说明](docs/DEPLOYMENT.md) 核对现场服务、备份配置及数据库，再在维护窗口升级：
 
 ```bash
 bash stop.sh
@@ -63,7 +61,7 @@ backend/.venv/bin/python -m pip install -r backend/requirements.txt
 (cd frontend && npm ci)
 ```
 
-#### 2. 配置数据库连接（唯一需要改的配置）
+#### 2. 配置数据库连接
 
 ```bash
 cp backend/.env.example backend/.env
@@ -96,7 +94,7 @@ sudo python3 manage_ssh.py --server-id <节点ID> --user test
 
 命令交互输入密码，验证连接成功后加密保存，不接受命令行密码。已有密钥文件不会被覆盖。也可以使用 HTTPS 页面编辑 SSH 密码；HTTP 页面禁止提交密码，留空保留已存密码，修改地址、端口或用户会清除旧密码。切换 Agent 后，可保留已配置的密码供受保护的网页运维使用；Agent 采集不会使用 SSH。错误密码仅尝试一次，更新密码后才重新尝试。
 
-生产内网页面使用 `https://192.168.1.24`（需信任内部 CA）。该 HTTPS 管理界面仅允许 `192.168.1.0/24`，公网入口仍只开放 Agent 上报路径。密码使用 SSH/TLS 加密传输、Fernet 加密保存；加密密钥默认 `/etc/node-monitor/ssh-credentials.key`，权限 600，可通过 `SSH_CREDENTIAL_KEY_FILE` 指定其他安全路径。请独立备份该密钥，丢失后需重新输入所有 SSH 密码。升级时执行 `python3 backend/migrate_agent.py` 增加可空密码字段，历史数据不变。
+生产内网页面使用 `https://192.168.1.24`（需信任内部 CA）。该 HTTPS 管理界面仅允许 `192.168.1.0/24`，公网入口仍只开放 Agent 上报路径。密码使用 SSH/TLS 加密传输、Fernet 加密保存；加密密钥默认 `/etc/node-monitor/ssh-credentials.key`，权限 600，可通过 `SSH_CREDENTIAL_KEY_FILE` 指定其他安全路径。请独立备份该密钥，丢失后需重新输入所有 SSH 密码。
 
 ### 启动 / 停止
 
@@ -133,9 +131,11 @@ systemd 模式日志使用 `journalctl -u watch-nanda-backend`；停止、启动
 
 已有 Agent 节点的「节点配置」提供「检测 Agent 上报可用性」，即时查询平台最近接收的有效上报、接收时间与采样时间，并按现有超时规则显示正常、延迟、离线或待上报。该检查只读、不连接 SSH、不重启服务；下方提示栏提供在节点查看 `node-monitor-agent` 服务状态与最近日志的命令。检测缺少上报凭据时会提示先完成部署或重新配置，不会展示 Token。
 
+检查结果异常时，下方提供「进入 Agent 重部署」，打开 `/nodes/:id/agent/redeploy` 独立页面。页面固定当前 Agent 节点，登录运维并验证 SSH 后，点击「重新部署 Agent」才执行；保留节点编号、分组和历史，更新采集程序与上报凭据，失败时尝试恢复原服务。该页面可查看部署日志并重新检测上报，不提供终端或其他节点选择。
+
 Dashboard 在「算力大屏」右侧提供月亮 / 太阳按钮：白天采用浅灰蓝，夜间采用深蓝灰。侧边栏、节点卡片、节点弹窗、历史负载及图表、运维与部署面板、设置、数据清理均共享主题；其他管理页面也可在侧边栏标题旁切换。图表切换保留缩放与隐藏曲线，命令行视口保持深色。首次访问跟随系统主题，手动选择保存在当前浏览器，刷新和其他同源标签页会保持一致，不改变监控数据或采集状态。
 
-Agent 部署仅从「增加服务器」流程进入：选择 Agent 采集后点击「添加并部署 Agent」，先创建节点，再跳转到 `/servers/new/:id/agent` 为该新节点检查并安装。部署页固定目标节点，只显示连接身份、环境检查和部署日志，不包含命令行。安装仍需点击「一键部署 Agent」才开始；刷新部署页可以继续查看任务。原 `/agents` 和 `/nodes/:id/agent` 书签转到运维页面。
+新节点首次部署从「增加服务器」流程进入：选择 Agent 采集后点击「添加并部署 Agent」，先创建节点，再跳转到 `/servers/new/:id/agent` 为该新节点检查并安装。部署页固定目标节点，只显示连接身份、环境检查和部署日志，不包含命令行。安装仍需点击「一键部署 Agent」才开始；刷新部署页可以继续查看任务。原 `/agents` 和 `/nodes/:id/agent` 书签转到运维页面。
 
 首次部署网页运维需在中心运行 `sudo python3 backend/manage_ops.py`，交互设置至少 12 字符的运维口令。口令仅保存 PBKDF2 校验摘要，默认文件 `/etc/node-monitor/ops-password.json`（权限 600，可用 `OPS_PASSWORD_FILE` 指定）。网页运维仅允许同源 HTTPS；登录使用 Secure、HttpOnly、SameSite=Strict Cookie，有效期 1 小时。运维口令与系统账号密码独立，系统 root 密码变化后需单独重新设置。
 
@@ -151,68 +151,76 @@ Agent 部署仅从「增加服务器」流程进入：选择 Agent 采集后点�
 - 启动和每分钟调度共用去重队列；同一节点排队或执行期间不会再次提交。
 - REST 与 SSE 共用状态计算：`online` 在线、`offline` 明确采集失败、
   `stale` 数据过期、`pending` 尚未采集。`collection_status` 保留最近采集结果。
-- `latest_status_data.timestamp` 是采集完成时间；无需修改已有数据库表。
-- `STALE_AFTER_SECONDS` 环境变量控制过期阈值，默认 180 秒，最小 60 秒。
+- SSH 的 `latest_status_data.timestamp` 是采集完成时间；Agent 的 timestamp 是节点采样时间，received_at 是中心接收时间。
+- SSH 的 `STALE_AFTER_SECONDS` 默认 180 秒、最小 60 秒；Agent 的 `AGENT_STALE_SECONDS` / `AGENT_OFFLINE_SECONDS` 默认 720 / 960 秒。
   浏览器按服务端数据年龄持续计时，网络断开时也会显示过期。
 - 过期数据不计入大屏在线算力，历史快照以对应状态记录，查询时显示为空值缺口。
 - SMTP 密码读取接口仅返回 `has_password`；保存时省略 `smtp_password` 保留原值。
 
-### 回归测试
-
-```bash
-python3 -m unittest discover -s backend/tests -v
-cd frontend
-node --test tests/state.test.mjs
-npm run build
-```
-
-后端测试使用独立临时 SQLite，SSH 与 SMTP 均模拟，不访问生产节点或发送邮件。
-前端状态测试覆盖 SSE/REST 竞争、断流后的过期判断、表单编辑保护、历史请求乱序及详情实时指标。
-
-平台采用 **SSE (Server-Sent Events)** 替代传统轮询：
+### 实时推送
 
 - **后端**：`/api/stream/servers` 端点每 10 秒推送一次最新数据（只读数据库，不触发 SSH）
 - **SSH 采集**：每 60 秒并发采集一次
 - **前端**：`useServers` composable 管理单例 EventSource 连接，多组件共享
-- **启动即采集**：FastAPI 启动时立即执行一次全量 SSH 采集，页面刷新后零延迟
+- **启动采集**：FastAPI 启动时提交首轮 SSH 任务，接口不等待采集完成；页面先显示现有缓存及其新鲜度
 - **历史查询优化**：`server_stats` 表的 `(server_id, timestamp)` 复合索引加速历史曲线加载
 
-运行 `add_index.sql` 可为已有数据库添加复合索引（新建库已包含）：
-```bash
-mysql -u root -p monitor_db < add_index.sql
-```
+历史查询索引由初始化脚本幂等补齐，已有索引不会重复创建。
 
 ## 目录结构
 
+面向后续开发的项目前置提示词见 [AGENTS.md](AGENTS.md)，完整架构、Git 改动阶段及有日期的生产核对结果见 [项目上下文](docs/PROJECT_CONTEXT.md)。每次改动后应检查这些说明是否需要同步，具体规则写在 AGENTS.md 中。
+
 ```
 watch-nanda/
-├── setup.sh                  # 一键环境初始化（.env + Docker MySQL + 建表 + 依赖）
-├── start.sh / stop.sh        # 启停脚本
-├── monitor_db.sql            # 数据库建表语句
-├── add_index.sql             # 历史查询性能优化索引（可选执行）
-├── README.md
-├── backend/                  # FastAPI 后端
-│   ├── main.py               # API 路由入口 + SSE 实时推送端点
-│   ├── requirements.txt      # 依赖清单
-│   ├── .env.example          # 数据库连接配置模板
-│   ├── .env                  # 实际配置（本地修改，不入库）
-│   ├── core/config.py        # 配置加载（读 .env）
-│   ├── models/               # ORM 模型与数据库连接
-│   └── worker/tasks.py       # SSH 采集 / 告警 / 定时调度
-└── frontend/                 # Vue 3 前端
-    └── src/
-        ├── api.js            # 统一后端 API 封装（REST 接口）
-        ├── composables/      # 组合式函数
-        │   └── useServers.js # SSE 实时数据推送（替代 60s 轮询）
-        ├── App.vue           # 全局外壳（侧边栏 + 路由出口）
-        ├── components/       # 通用组件（环形进度图等）
-        └── views/            # 控制台 / 大屏 / 历史 / 设置 / 清理
+├── AGENTS.md                 # 项目前置提示词、模块职责与每轮更新检查规则
+├── README.md                 # 使用与部署说明
+├── docs/                     # 架构与进度（PROJECT_CONTEXT）、部署（DEPLOYMENT）
+├── setup.sh                  # 初始化依赖、数据库、迁移并构建前端
+├── start.sh / stop.sh        # 幂等启停入口（systemd 或受控后台模式）
+├── install-agent.sh          # 中心侧交互安装 Agent
+├── monitor_db.sql            # 新库结构；已有库使用增量迁移
+├── backend/
+│   ├── main.py               # REST、SSE、Agent 上报及运维路由挂载
+│   ├── core/                 # 配置、状态、历史、上报、健康检查、凭据与运维
+│   ├── models/               # 五张业务表的 ORM 与数据库连接
+│   ├── worker/tasks.py       # SSH 采集、历史落库、邮件告警和调度
+│   ├── migrate_agent.py      # 已有库幂等迁移；--check 只读
+│   ├── manage_*.py           # Agent Token、SSH 凭据、运维口令管理
+│   ├── agent_job.py          # 网页部署子进程入口
+│   ├── .env.example          # 配置模板；真实 .env 不入库
+│   └── tests/                # 隔离后端与安装/启停回归
+├── frontend/
+│   ├── src/api.js            # 同源 HTTPS API
+│   ├── src/router/           # 路由与旧入口重定向
+│   ├── src/composables/      # 共享实时数据、节点连接、主题状态
+│   ├── src/components/       # 节点详情、Agent 诊断、终端等共用组件
+│   ├── src/views/            # 控制台/大屏/历史/设置/清理/运维/新节点部署
+│   ├── src/styles/           # 共用主题变量与运维样式
+│   ├── src/utils/            # 状态、指标、图表、主题、传输工具
+│   ├── tests/                # Node 前端回归
+│   └── vite.config.js        # HTTPS 开发/预览与 API/WebSocket 代理
+├── agent/                    # 节点采样上报、安装回滚、独立包构建与说明
+├── scripts/                  # 数据库初始化、生命周期、中心安装编排
+└── deploy/production/        # 基础 Nginx 与雷池控制台配置
 ```
 
-## 历史折线图（2026-09-13）
+## 历史折线图
 
 - 1 天/1 周显示 10 分钟快照；季度/半年/年度按北京时间自然日聚合。MySQL 8+ 的 JSON_TABLE 在数据库端提取显存百分比，避免传输完整 GPU 进程 JSON。响应包含统一的 start/end、聚合方式和采样统计。
 - CPU、内存和显存分别剔除缺失、越界与非数值样本；离线/过期不计作 0。无 GPU 不计作 0% 显存。平均值按有效原始样本计算，峰值取原始采样峰值；部分日期仅统计查询范围内样本。
 - 图表默认聚焦已有记录，可切换完整范围；日期自动避让，支持滑块缩放和图例开关。缺失采集保留断点。查询超时为 45 秒，失败可直接重试，关闭弹窗取消请求，旧响应不能覆盖新范围。
-- 后端回归：`python3 -m unittest discover -s backend/tests -v`；前端回归：在 frontend 下运行 `node --test tests/*.test.mjs`。
-- MySQL 专项：在 backend 下运行 `python3 tests/check_history_mysql.py`，仅使用连接内临时表校验北京时间边界、按样本加权及缺失值规则，不修改正式历史表。
+
+## 回归测试
+
+```bash
+python3 -m pip install -r backend/requirements-test.txt
+python3 -m unittest discover -s backend/tests -v
+cd frontend
+node --test tests/*.test.mjs
+npm run build
+```
+
+后端测试使用独立临时 SQLite，SSH 与 SMTP 均模拟，不访问生产节点或发送邮件；安装、权限、systemd 和进程管理回归需要 Linux。前端覆盖历史查询、SSE/REST、新鲜度、表单保护、节点运维/部署、Agent 检查、主题和 HTTPS。
+
+MySQL 专项：在 backend 下运行 `python3 tests/check_history_mysql.py`，仅使用连接内临时表校验北京时间边界、按样本加权及缺失值规则，不修改正式历史表。

@@ -20,7 +20,8 @@ def main():
     data = json.loads(sys.stdin.buffer.read(16384))
     args = argparse.Namespace(ip=data['host'], port=data['port'], user=data['username'],
         server_id=data['server_id'], url=default_report_url(data['host']),
-        ca_file=Path('/etc/node-monitor/tls/ca.crt'), bundle=None, source=False, check_only=False, require_bundle=True)
+        ca_file=Path('/etc/node-monitor/tls/ca.crt'), bundle=None, source=False, check_only=False, require_bundle=True,
+        reinstall=bool(data.get('reinstall', False)))
     if not list((ROOT / 'agent' / 'dist').glob('node-monitor-agent-linux-*.tar.gz')):
         raise InstallError('中心缺少独立 Agent 包，请先运行 agent/build.sh')
     result = install(args, data['password'], known_hosts_only=True)

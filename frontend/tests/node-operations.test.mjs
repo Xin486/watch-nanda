@@ -159,6 +159,7 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
   })
   const context = {
     computed, ref, watch, onBeforeUnmount: fn => unmounts.push(fn),
+    defineProps: () => ({ redeploy: false }),
     useNodeAccess: () => access,
     setInterval: fn => { timers.push(fn); return fn }, clearInterval() {},
     window: { dispatchEvent() {} }, CustomEvent: class {},
@@ -182,6 +183,43 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
     await context.exposed.pollJob()
     assert.equal(context.exposed.job.value.status, 'success')
     assert.equal(context.exposed.job.value.logs[0], 'Agent ready')
+    await context.exposed.deploy()
+    assert.equal(calls.length, 2)
+  } finally { unmounts.forEach(fn => fn()); scope.stop() }
+})
+
+test('redeployment is explicit, uses the existing Agent ID and ignores old deployment success', async () => {
+  const calls = [], unmounts = []
+  const access = reactive({ authenticated: true, node: { id: 7, collection_mode: 'agent', ip_address: '192.168.1.7' },
+    credentials: { password: 'test-only' }, busy: false, validInput: () => true,
+    testConnection: async () => { calls.push('ssh'); return true }, payload: () => ({ use_saved: true }), handleError: e => { throw e },
+  })
+  const context = {
+    computed, ref, watch, defineProps: () => ({ redeploy: true }), onBeforeUnmount: fn => unmounts.push(fn),
+    useNodeAccess: options => { assert.equal(options.selectable, false); return access },
+    setInterval: () => 1, clearInterval() {}, window: { dispatchEvent() {} }, CustomEvent: class {},
+    api: {
+      deploymentJobs: async () => ({ data: [{ id: 'old-deploy', kind: 'deploy', status: 'success' }] }),
+      deployAgent: () => { throw Error('New-server API must not be used') },
+      redeployAgent: async (id, payload) => { calls.push('redeploy'); assert.equal(id, 7); assert.equal(payload.use_saved, true); return { data: { id: 'repair-7', status: 'running', kind: 'redeploy' } } },
+      deploymentJob: async () => ({ data: { id: 'repair-7', status: 'success', kind: 'redeploy' } }),
+    },
+  }
+  vm.createContext(context)
+  const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
+  const scope = effectScope()
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,pollJob}', context))
+  try {
+    await nextTick()
+    assert.deepEqual(calls, [])
+    assert.equal(context.exposed.job.value, null)
+    await context.exposed.deploy()
+    assert.deepEqual(calls, ['ssh', 'redeploy'])
+    assert.equal(access.credentials.password, '')
+    await context.exposed.pollJob()
+    assert.equal(context.exposed.job.value.status, 'success')
+    access.node.collection_mode = 'ssh'
+    await nextTick()
     await context.exposed.deploy()
     assert.equal(calls.length, 2)
   } finally { unmounts.forEach(fn => fn()); scope.stop() }

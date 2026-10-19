@@ -58,6 +58,26 @@ class OperationsTests(unittest.TestCase):
         main.app.dependency_overrides[main.get_db]=db
         return TestClient(main.app,base_url='https://testserver')
 
+    def test_redeployment_is_authenticated_agent_only_and_queues_the_existing_node(self):
+        with self.client() as client,patch.object(ops.workers,'submit') as submit:
+            body={'use_saved':False,'username':'root','password':'test-node-secret'}
+            self.assertEqual(client.post('/api/ops/nodes/1/redeploy',json=body).status_code,401)
+            self.login(client)
+            self.assertEqual(client.post('/api/ops/nodes/1/redeploy',json=body).status_code,409)
+            with self.Session() as db:
+                node=db.get(Server,1);node.collection_mode='agent'
+                db.add(AgentCredential(server_id=1,token_hash='old-agent-token-digest'));db.commit()
+            response=client.post('/api/ops/nodes/1/redeploy',json=body)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['kind'],'redeploy')
+            self.assertEqual(response.json()['server_id'],1)
+            self.assertNotIn('test-node-secret',response.text)
+            self.assertTrue(submit.call_args.args[2]['reinstall'])
+            self.assertEqual(client.post('/api/ops/nodes/1/redeploy',json=body).status_code,409)
+            with self.Session() as db:
+                self.assertEqual(db.get(AgentCredential,1).token_hash,'old-agent-token-digest')
+                self.assertEqual(db.query(Server).count(),1)
+
     def test_operator_password_hash_session_expiry_and_login_throttle(self):
         self.assertNotIn('test-operator-password',ops_auth.password_path().read_text())
         token=ops_auth.verify_login('test-operator-password','client')

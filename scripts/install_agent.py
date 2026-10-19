@@ -157,7 +157,7 @@ def find_server(db, ip, port, server_id=None):
     return server
 
 
-def provision(db, ip, port, user, hostname, server_id=None):
+def provision(db, ip, port, user, hostname, server_id=None, *, require_agent=False):
     from models.models import AgentCredential, Server
     server = find_server(db, ip, port, server_id)
     created = server is None
@@ -167,6 +167,9 @@ def provision(db, ip, port, user, hostname, server_id=None):
         db.flush()
     # Use the same lock order as token administration and report ingestion.
     server = db.query(Server).filter(Server.id == server.id).with_for_update().one()
+    if require_agent and server.collection_mode != 'agent':
+        db.rollback()
+        raise InstallError('该节点已不再使用 Agent，未修改采集方式或凭据，请刷新后重试')
     old = db.get(AgentCredential, server.id)
     snapshot = {'id': server.id, 'created': created, 'state': {k:getattr(server,k) for k in STATE_FIELDS},
                 'credential': None if old is None else {'token_hash':old.token_hash, 'last_history_report_id':old.last_history_report_id}}
@@ -235,6 +238,7 @@ def parse_args():
     parser.add_argument('--bundle', type=Path, help='独立运行包；默认自动使用 agent/dist 中对应架构的安装包')
     parser.add_argument('--source', action='store_true', help='强制使用旧版 Python/venv 安装方式')
     parser.add_argument('--check-only', action='store_true', help='只检查环境、证书和服务，不安装依赖或签发凭据')
+    parser.add_argument('--reinstall', action='store_true', help='重部署指定的已有 Agent 节点，保留 ID 和历史')
     args = parser.parse_args()
     args.ip = args.ip or input('目标机器 IP：').strip()
     try:
@@ -250,6 +254,8 @@ def parse_args():
         parser.error('SSH 用户名或端口不合法')
     if args.server_id is not None and args.server_id < 1:
         parser.error('--server-id 必须为正整数')
+    if args.reinstall and args.server_id is None:
+        parser.error('--reinstall 必须指定已有 --server-id')
     if args.source and args.bundle:
         parser.error('--source 与 --bundle 不能同时使用')
     args.url=args.url or default_report_url(args.ip)
@@ -270,7 +276,7 @@ def parse_args():
     return args
 
 
-def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
+def install(args, password, *, known_hosts_only=False):
     """Reusable batch entry point; passwords stay in memory and are never logged."""
     try:
         import paramiko
@@ -292,9 +298,12 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
     bundle_hash = None
     snapshot = digest = release = None
     activated = completed = False
+    preserve_stage = False
     with SessionLocal() as db:
         try:
             server = find_server(db, args.ip, args.port, args.server_id)
+            if getattr(args, 'reinstall', False) and (server is None or server.collection_mode != 'agent'):
+                raise InstallError('重部署仅适用于已有 Agent 节点，未修改节点配置')
             if server:
                 print(f'匹配已有节点 ID={server.id}：{server.hostname}（历史保留）')
             db.rollback()  # Never hold a database transaction during SSH/pip operations.
@@ -341,15 +350,19 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
             ca = args.ca_file.read_bytes() if args.ca_file else None
             if ca:
                 remote.put(stage, 'ca.crt', ca)
-            check = remote.helper(stage, 'check', url=args.url)
+            print('检查目标机出站 HTTPS 与防火墙；仅放通上报目的地址/端口，不开放入站端口…', flush=True)
+            check = remote.helper(stage, 'check', url=args.url, firewall_mode='inspect' if args.check_only else 'ensure')
             if abs(check['clock']-time.time()) > 55:
                 raise InstallError('节点与监控中心时钟相差超过 55 秒，请先启用时间同步')
             print(f"检查通过：{check['hostname']}，Python {check['python_version']}，HTTPS 证书有效；Agent={'运行中' if check['active'] else '未运行'}")
+            network = check.get('network')
+            if network:
+                print(f"出站 {network['host']}:{network['port']}/TCP 已通过 TLS 校验；防火墙={','.join(network['firewalls']) or '未启用受支持的管理器'}；新增规则={network['rules_added']}；安装后还将验证服务账户真实上报。", flush=True)
             server = find_server(db, args.ip, args.port, args.server_id)
             credential = db.get(AgentCredential, server.id) if server else None
             healthy = already_healthy(server, credential, check, args.url, hashlib.sha256(ca).hexdigest() if ca else None,bundle_hash)
             db.rollback()
-            if args.check_only or healthy:
+            if args.check_only or (healthy and not getattr(args, 'reinstall', False)):
                 print('检查完成，未修改节点或凭据。' if args.check_only else 'Agent 版本、节点凭据及配置一致，服务运行正常，跳过重复安装。')
                 completed = True
                 return {'server_id':server.id if server else None,'status':'checked' if args.check_only else 'already_healthy'}
@@ -361,7 +374,8 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
             # the destination labels before systemd executes the installed files.
             remote.run('if command -v restorecon >/dev/null 2>&1; then restorecon -R -- '+shlex.quote(release)+'; fi', root=True)
             print('签发单节点 Token，部署服务并验证首次 HTTPS 上报…', flush=True)
-            snapshot, token, digest = provision(db, args.ip, args.port, args.user, check['hostname'], args.server_id)
+            snapshot, token, digest = provision(db, args.ip, args.port, args.user, check['hostname'], args.server_id,
+                                               require_agent=getattr(args, 'reinstall', False))
             config = {'url':args.url, 'server_id':snapshot['id'], 'token':token, 'interval_seconds':300, 'jitter_seconds':15}
             if ca:
                 config['ca_file'] = '/etc/node-monitor-agent/ca.crt'
@@ -370,10 +384,11 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
             remote.helper(stage, 'activate', release=release)
             remote.helper(stage, 'finish', release=release)
             completed = True
-            print(f"安装成功：节点 ID={snapshot['id']}，每 300 秒上报，systemd 已启用开机启动。")
+            print(f"安装成功：节点 ID={snapshot['id']}，服务账户真实 HTTPS 上报已通过，每 300 秒上报，systemd 已启用开机启动。")
             print('SSH 密码未保存，未创建 SSH 密钥或修改 authorized_keys/crontab。')
             return {'server_id':snapshot['id'],'status':'installed'}
         except BaseException:
+            network_restore_safe = True
             if release and not activated:
                 try:
                     remote.helper(stage, 'rollback', release=release)
@@ -388,12 +403,20 @@ def install(args, password, *, use_existing_keys=False, known_hosts_only=False):
                     print(f'节点备份：{release}/.rollback；安装目录：{stage}', file=sys.stderr)
                     # An uncertain remote activation may still be using this token.
                     snapshot = None
+                    network_restore_safe = False
             if snapshot:
                 restore_credentials(db, snapshot, digest)
                 print('已撤销本次 Token；已有节点的原采集方式及凭据已恢复。', file=sys.stderr)
+            if stage and network_restore_safe:
+                try:
+                    remote.helper(stage, 'network-rollback')
+                except Exception:
+                    # Retain the journal for manual recovery, including pre-activation failures.
+                    preserve_stage = True
+                    print('出站规则恢复未确认，请核对 '+stage+'/network-changes.json；未关闭防火墙或改动其他规则。', file=sys.stderr)
             raise
         finally:
-            if stage and (completed or not activated):
+            if stage and (completed or not activated) and not preserve_stage:
                 try:
                     remote.run('rm -rf -- '+shlex.quote(stage), root=True, timeout=15)
                 except Exception:
