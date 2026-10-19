@@ -37,6 +37,14 @@
   --shadow-hover: 0 8px 24px #20334d12;
   --shadow-modal: 0 30px 100px #0f172a40;
   --backdrop: #17253c80;
+  /* The command viewport stays dark in both modes; its surrounding controls follow the page. */
+  --terminal-bg: #111b2b;
+  --terminal-header: #162234;
+  --terminal-text: #dbe5f3;
+  --terminal-muted: #a5bad4;
+  --terminal-border: #35465e;
+  --terminal-control: #1b2b41;
+  --terminal-success: #70e2bc;
 }
 
 :root[data-theme="dark"] {

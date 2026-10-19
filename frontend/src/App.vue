@@ -4,6 +4,7 @@
     <aside class="sidebar">
       <div class="logo-area">
         <h2>{{ companyName || '南大仙林' }}</h2>
+        <ThemeToggle v-if="route.path !== '/dashboard' && route.path !== '/bigscreen'"/>
       </div>
       
       <nav class="menu" aria-label="主导航">
@@ -62,6 +63,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AddServerModal from './components/AddServerModal.vue'
 import NavIcon from './components/NavIcon.vue'
+import ThemeToggle from './components/ThemeToggle.vue'
 import { useServers } from './composables/useServers'
 
 const route = useRoute()
@@ -126,7 +128,7 @@ watch(() => route.path, () => {
 html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; }
 .app-layout { display: flex; height: 100vh; overflow: hidden; }
 .sidebar { width: 240px; flex-shrink: 0; background: var(--sidebar-bg); color: var(--text-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; box-sizing: border-box; }
-.logo-area { padding: 27px 28px; border-bottom: 1px solid var(--border); }
+.logo-area { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 24px 24px; border-bottom: 1px solid var(--border); }
 .logo-area h2 { margin: 0; color: var(--text); font-size: 21px; font-weight: 650; letter-spacing: .5px; }
 .menu { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 12px 22px; }
 .menu-group-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 14px 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
@@ -138,7 +140,7 @@ html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); fo
 .menu-item.active { background: var(--nav-active-bg); color: var(--accent); box-shadow: inset 3px 0 var(--accent); font-weight: 600; }
 .menu-item .icon { width: 20px; height: 20px; flex-shrink: 0; }
 .menu-item:focus-visible,.add-group-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-.main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--page-bg); }
+.main-content { flex: 1; min-width: 0; overflow-y: auto; background: var(--page-bg); color: var(--text); }
 
 /* 弹窗样式 */
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
@@ -161,7 +163,7 @@ html, body { margin: 0; padding: 0; height: 100%; background: var(--page-bg); fo
 .node-status.pending { color: var(--text-muted); }
 button:disabled { opacity: .6; cursor: not-allowed; }
 @media (max-width: 1100px) { .sidebar { width: 190px; flex-shrink: 0; } }
-@media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 20px 14px; } .menu { padding: 10px 8px; } .menu-item { padding: 11px 10px; gap: 8px; font-size: 12px; } }
+@media (max-width: 700px) { .sidebar { width: 150px; } .logo-area { padding: 20px 12px; gap: 6px; } .logo-area h2 { font-size: 16px; } .menu { padding: 10px 8px; } .menu-item { padding: 11px 10px; gap: 8px; font-size: 12px; } }
 @media (max-width: 600px) {
   .app-layout { flex-direction: column; height: 100dvh; }
   .sidebar { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }

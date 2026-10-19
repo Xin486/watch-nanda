@@ -19,7 +19,7 @@ function setup(file, names, overrides={}) {
   const context={
     ref:value=>({value}), shallowRef:value=>({value}), computed:get=>({get value(){return get()}}),
     onMounted:()=>{}, onUnmounted:cb=>unmounts.push(cb), onBeforeUnmount:cb=>unmounts.push(cb), nextTick:async cb=>cb?.(),
-    watch:()=>{}, useRoute:()=>({query:{}}), useRouter:()=>({push:()=>{}}),
+    watch:()=>{}, useRoute:()=>({query:{}}), useRouter:()=>({push:()=>{}}), useTheme:()=>({theme:{value:'light'}}), readThemeColors:()=>undefined,
     defineProps:()=>({serverId:1}), defineEmits:()=>()=>{}, location:{protocol:'https:'},
     setInterval:(cb,ms)=>{ const task={cb,ms}; intervals.push(task); return task }, clearInterval:()=>{},
     window:{location:{hostname:'test'}, addEventListener:(name,cb)=>listeners.set(name,cb),removeEventListener:name=>listeners.delete(name),dispatchEvent:()=>{}},
@@ -143,6 +143,28 @@ test('node metrics update while unsaved edits remain intact; save can be repeate
   assert.equal(h.node.value.cpu_percent,80);assert.equal(h.form.value.hostname,'user-edit')
   await h.save();assert.equal(h.saving.value,false)
   await h.save();assert.equal(writes,2)
+})
+
+test('history theme switch recolors the open chart without fetching or losing zoom and hidden curves',()=>{
+  const rendered=[], theme={value:'dark'};let recolor, requests=0
+  const palette={text:'#f0f5fc',muted:'#b5c4d6',border:'#43556c',grid:'#3c4e65',surface:'#2e3e53',soft:'#29394d',accent:'#9bc1ff',accentSoft:'#304b6e',track:'#435770',cpu:'#8cb6f4',memory:'#58d5b2',gpu:'#c2a6f6'}
+  const chart={resize:()=>{},setOption:option=>rendered.push(option),getOption:()=>({legend:[{selected:{'CPU 使用率':false}}],dataZoom:[{start:25,end:70},{start:25,end:70}]})}
+  const h=setup('views/History.vue',['dialogRef','chartRef','myChart','history'],{
+    prepareHistory,chartOption,useTheme:()=>({theme}),readThemeColors:()=>palette,
+    useServers:()=>({servers:{value:[]},subscribe:()=>{}}),
+    watch:(source,cb)=>{if(source===theme)recolor=cb},api:{getHistory:()=>requests++},
+  })
+  h.dialogRef.value={open:true};h.chartRef.value={clientWidth:900};h.myChart.value=chart
+  const stamp=new Date(Date.now()-3600000).toISOString()
+  h.history.value=prepareHistory({data:[{time:stamp,cpu:70,ram:20,gpu:30}]},1)
+  recolor()
+  assert.equal(requests,0);assert.equal(rendered.length,1)
+  assert.equal(rendered[0].tooltip.backgroundColor,palette.surface)
+  assert.equal(rendered[0].xAxis.axisLabel.color,palette.muted)
+  assert.equal(rendered[0].legend.selected['CPU 使用率'],false)
+  assert.equal(rendered[0].dataZoom[0].start,25);assert.equal(rendered[0].dataZoom[0].end,70)
+  assert.equal(rendered[0].series[0].data[0][1],70)
+  assert.equal(rendered[0].series[0].itemStyle.color,palette.cpu)
 })
 
 test('Agent check requests fresh diagnostics without saving or mutating node configuration',async()=>{

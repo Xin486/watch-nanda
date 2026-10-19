@@ -44,19 +44,19 @@ const statusColor = computed(() => {
 .chart-container { position: relative; width: 100%; display: flex; align-items: center; justify-content: center; }
 
 .circular-chart { display: block; width: 100%; max-height: 250px; }
-.circle-bg { fill: none; stroke: #f1f5f9; stroke-width: 3.5; }
+.circle-bg { fill: none; stroke: var(--track); stroke-width: 3.5; }
 .circle { fill: none; stroke-width: 3.5; stroke-linecap: round; transition: stroke-dasharray 0.5s ease; }
 
-.normal .circle { stroke: #10b981; }
-.warning .circle { stroke: #f59e0b; }
-.danger .circle { stroke: #ef4444; }
+.normal .circle { stroke: var(--metric-memory); }
+.warning .circle { stroke: var(--warning); }
+.danger .circle { stroke: var(--danger); }
 
 /* 数字排版优化 */
-.percentage-text { position: absolute; display: flex; align-items: baseline; color: #1e293b; }
+.percentage-text { position: absolute; display: flex; align-items: baseline; color: var(--text); }
 .num { font-size: 17px; font-weight: 700; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 .num.long { font-size: 12px; }
-.pct { font-size: 11px; font-weight: 600; margin-left: 1px; color: #64748b; }
+.pct { font-size: 11px; font-weight: 600; margin-left: 1px; color: var(--text-muted); }
 
-.label { margin-top: 6px; font-size: 13px; color: #475569; font-weight: bold; }
-.sub-label { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.label { margin-top: 6px; font-size: 13px; color: var(--text-secondary); font-weight: bold; }
+.sub-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 </style>

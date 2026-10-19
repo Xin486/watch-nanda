@@ -1,7 +1,7 @@
 <template>
   <div class="cleanup-page">
     <div class="panel">
-      <h2>🗑️ 数据清理与节点管理</h2>
+      <h2>数据清理与节点管理</h2>
       <p class="desc">您可以在此页面管理服务器节点及其产生的历史负载数据。红色按钮为高危操作，请谨慎点击。</p>
       
       <table class="data-table">
@@ -27,9 +27,9 @@
               </span>
             </td>
             <td class="actions">
-              <button class="btn-view" @click="$router.push('/history')">📈 查历史数据</button>
-              <button class="btn-clean" @click="cleanHistory(server)">🧹 清理历史数据</button>
-              <button class="btn-delete" @click="deleteServer(server)">❌ 删除服务器</button>
+              <button class="btn-view" @click="$router.push('/history')">查历史数据</button>
+              <button class="btn-clean" @click="cleanHistory(server)">清理历史数据</button>
+              <button class="btn-delete" @click="deleteServer(server)">删除服务器</button>
             </td>
           </tr>
         </tbody>
@@ -81,33 +81,35 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.cleanup-page { padding: 20px; }
-.panel { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-h2 { margin-top: 0; color: #1e293b; }
-.desc { color: #64748b; margin-bottom: 25px; font-size: 14px; }
+.cleanup-page { padding: 30px 32px; color: var(--text); }
+.panel { overflow-x:auto; background:var(--surface); padding: 25px; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+h2 { margin-top: 0; color: var(--text); }
+.desc { color: var(--text-muted); margin-bottom: 25px; font-size: 14px; }
 
 .data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.data-table th, .data-table td { padding: 12px 15px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: middle; }
-.data-table th { background-color: #f8fafc; color: #475569; font-weight: bold; }
-.data-table tr:hover { background-color: #f1f5f9; }
+.data-table th, .data-table td { padding: 12px 15px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.data-table th { background-color: var(--surface-soft); color: var(--text-secondary); font-weight: bold; }
+.data-table tr:hover { background-color: var(--surface-muted); }
 
-.ip-text { font-family: monospace; color: #64748b; }
-.group-tag { background: #e0f2fe; color: #0369a1; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-.text-green { color: #10b981; font-weight: bold; }
-.text-red { color: #ef4444; font-weight: bold; }
+.ip-text { font-family: monospace; color: var(--text-muted); }
+.group-tag { background: var(--accent-soft); color: var(--accent); padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+.text-green { color: var(--success); font-weight: bold; }
+.text-red { color: var(--danger); font-weight: bold; }
 
 .actions { display: flex; gap: 10px; }
 button { padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-weight: bold; font-size: 13px; }
 
 /* 查历史按钮 - 蓝色 */
-.btn-view { background: #eff6ff; border: 1px solid #bfdbfe; color: #2563eb; }
-.btn-view:hover { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.btn-view { background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--accent); }
+.btn-view:hover { background:var(--primary-bg); color:var(--on-primary); border-color:var(--primary-bg); }
 
 /* 清理历史按钮 - 橙色 */
-.btn-clean { background: #fff7ed; border: 1px solid #fed7aa; color: #ea580c; }
-.btn-clean:hover { background: #f97316; color: #fff; border-color: #f97316; }
+.btn-clean { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning); }
+.btn-clean:hover { background: var(--warning-bg); color:var(--warning); border-color: var(--warning); }
 
 /* 彻底删除按钮 - 红色 */
-.btn-delete { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
-.btn-delete:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+.btn-delete { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger); }
+.btn-delete:hover { background: var(--danger-bg); color:var(--danger); border-color: var(--danger); }
+button:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+@media(max-width:700px) { .cleanup-page { padding:20px 16px; } }
 </style>

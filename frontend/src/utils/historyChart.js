@@ -1,7 +1,7 @@
 export const METRICS = [
-  { key: 'cpu', name: 'CPU 使用率', color: '#3b82f6' },
-  { key: 'ram', name: '内存使用率', color: '#14b8a6' },
-  { key: 'gpu', name: '平均显存占用', color: '#8b5cf6' },
+  { key: 'cpu', name: 'CPU 使用率', color: 'var(--metric-cpu)' },
+  { key: 'ram', name: '内存使用率', color: 'var(--metric-memory)' },
+  { key: 'gpu', name: '平均显存占用', color: 'var(--metric-gpu)' },
 ]
 const finitePercent = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null
 export const percentage = value => finitePercent(value) == null ? '—' : `${Number(value.toFixed(1))}%`
@@ -49,35 +49,40 @@ export function prepareHistory(payload, days, now = Date.now()) {
     empty: !points.some(p => METRICS.some(({key}) => p[key] != null)) }
 }
 
-export function chartOption(history, width, fullRange = false) {
+export function chartOption(history, width, fullRange = false, palette = {
+  text:'#20334d', muted:'#526985', border:'#d8e1ee', grid:'#e5ebf4', surface:'#ffffff', soft:'#f5f8fc',
+  accent:'#245dcc', accentSoft:'#e8f0ff', track:'#e4ebf5', cpu:'#4e83dc', memory:'#23a18b', gpu:'#9870d2',
+}) {
   const { start, end, points, seriesPoints, daily } = history
   const min = fullRange || !points.length ? start : Math.max(start, points[0].time - (daily ? 43200000 : 600000))
   const span = end - min
   const labelMode = span > 120 * 86400000 ? 'month' : span > 2 * 86400000 ? 'day' : 'clock'
   return {
     animation: false,
-    textStyle: { fontFamily:'Inter, "Microsoft YaHei", sans-serif' },
-    color: METRICS.map(m => m.color),
+    textStyle: { fontFamily:'Inter, "Microsoft YaHei", sans-serif', color:palette.text },
+    color: [palette.cpu, palette.memory, palette.gpu],
     legend: { top: 8, left: 'center', itemWidth: 16, itemHeight: 8, itemGap: width < 500 ? 10 : 24,
-      textStyle: { color:'#526079', fontSize:width < 500 ? 10 : 12 } },
+      textStyle: { color:palette.muted, fontSize:width < 500 ? 10 : 12 }, inactiveColor:palette.muted },
     grid: { top: 62, left: 48, right: 24, bottom: 86 },
-    tooltip: { trigger:'axis', confine:true, renderMode:'richText', backgroundColor:'#fff', borderColor:'#e2e8f0',
-      textStyle:{ color:'#334155', fontSize:12 }, axisPointer:{ type:'line', lineStyle:{ color:'#94a3b8', type:'dashed' } },
+    tooltip: { trigger:'axis', confine:true, renderMode:'richText', backgroundColor:palette.surface, borderColor:palette.border,
+      textStyle:{ color:palette.text, fontSize:12 }, axisPointer:{ type:'line', lineStyle:{ color:palette.muted, type:'dashed' } },
       formatter: params => !params?.length ? '' : `${beijingTime(params[0].value[0])}${daily ? ' · 日均' : ''}\n` +
         params.map(p => `${p.seriesName}    ${percentage(p.value[1])}`).join('\n') },
     xAxis: { type:'time', min, max:end, splitNumber:Math.max(2, Math.floor(width/140)),
-      axisLine:{ lineStyle:{color:'#e2e8f0'} }, axisTick:{ show:false }, splitLine:{show:false},
-      axisLabel:{ color:'#8491a5', fontSize:11, margin:14, hideOverlap:true, showMinLabel:false, showMaxLabel:false,
+      axisLine:{ lineStyle:{color:palette.border} }, axisTick:{ show:false }, splitLine:{show:false},
+      axisLabel:{ color:palette.muted, fontSize:11, margin:14, hideOverlap:true, showMinLabel:false, showMaxLabel:false,
         formatter: value => beijingTime(value,labelMode) } },
-    yAxis: { type:'value', min:0, max:100, interval:25, axisLabel:{ formatter:'{value}%',color:'#8491a5',fontSize:11 },
-      splitLine:{ lineStyle:{ color:'#edf1f7',type:'dashed' } } },
-    dataZoom: [{ type:'slider', bottom:10, height:22, borderColor:'transparent', backgroundColor:'#f3f6fb',
-      fillerColor:'rgba(59,130,246,.10)', handleStyle:{ color:'#fff',borderColor:'#93b8f9' },
-      showDetail:false, brushSelect:false, textStyle:{color:'#64748b'}, filterMode:'none' },
+    yAxis: { type:'value', min:0, max:100, interval:25, axisLabel:{ formatter:'{value}%',color:palette.muted,fontSize:11 },
+      splitLine:{ lineStyle:{ color:palette.grid,type:'dashed' } } },
+    dataZoom: [{ type:'slider', bottom:10, height:22, borderColor:'transparent', backgroundColor:palette.soft,
+      fillerColor:palette.accentSoft, handleStyle:{ color:palette.surface,borderColor:palette.accent },
+      dataBackground:{ lineStyle:{color:palette.muted}, areaStyle:{color:palette.track} },
+      selectedDataBackground:{lineStyle:{color:palette.accent},areaStyle:{color:palette.accentSoft}},
+      showDetail:false, brushSelect:false, textStyle:{color:palette.muted}, filterMode:'none' },
       {type:'inside', filterMode:'none', zoomOnMouseWheel:'ctrl', moveOnMouseWheel:false}],
-    series: METRICS.map(({key,name,color}) => ({ name, type:'line', smooth:false, connectNulls:false,
+    series: METRICS.map(({key,name}, i) => ({ name, type:'line', smooth:false, connectNulls:false,
       showSymbol:points.length <= 10, symbol:'circle', symbolSize:5, lineStyle:{width:2},
-      itemStyle:{color}, emphasis:{focus:'series'}, areaStyle:{color,opacity:0.035},
+      itemStyle:{color:[palette.cpu,palette.memory,palette.gpu][i]}, emphasis:{focus:'series'}, areaStyle:{color:[palette.cpu,palette.memory,palette.gpu][i],opacity:0.035},
       data:seriesPoints.map(p => [p.time,p[key]]) })),
   }
 }
