@@ -18,7 +18,9 @@
     <form v-else class="detail-body settings-body" @submit.prevent="save">
       <p class="form-description">修改节点连接与采集方式。邮件提醒可通过标题旁的小铃铛单独控制。</p>
       <div class="settings-grid"><label>节点名称<input v-model="form.hostname" required maxlength="100"></label><label>IP 地址<input v-model="form.ip_address" required maxlength="50"></label><label>所属分组<input v-model="form.group_name" list="detail-groups"><datalist id="detail-groups"><option v-for="group in groups" :key="group" :value="group"/></datalist></label><label>采集方式<select v-model="form.collection_mode"><option value="agent">Agent 主动上报 · 每 5 分钟</option><option value="ssh">SSH 用户名密码采集</option></select></label><template v-if="form.collection_mode === 'ssh'"><label>SSH 用户名<input v-model="form.ssh_user" required maxlength="50" autocomplete="off"></label><label>SSH 端口<input v-model.number="form.ssh_port" type="number" min="1" max="65535" required></label><label class="full-field">SSH 密码<input v-model="form.ssh_password" type="password" autocomplete="new-password" :placeholder="node.has_ssh_password ? '已配置，留空保留原密码' : '输入 SSH 密码'"><small>密码通过 HTTPS 提交并加密保存。修改连接地址、端口或用户名时需重新输入。</small></label></template></div>
-      <p v-if="form.collection_mode === 'agent'" class="config-note">切换采集方式不会自动安装 Agent，请先确认节点采集服务已正常运行。</p><p v-if="error" class="detail-error" role="alert">{{ error }}</p>
+      <p v-if="form.collection_mode === 'agent' && node.collection_mode !== 'agent'" class="config-note">切换采集方式不会自动安装 Agent，请先确认节点采集服务已正常运行。</p>
+      <AgentHealthPanel v-if="node.collection_mode === 'agent' && form.collection_mode === 'agent'" :server-id="serverId"/>
+      <p v-if="error" class="detail-error" role="alert">{{ error }}</p>
       <footer class="detail-actions"><button type="button" class="secondary-action" @click="close">取消</button><button class="primary-action" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存配置' }}</button></footer>
     </form>
   </dialog>
@@ -30,6 +32,7 @@ import { useServers } from '../composables/useServers'
 import { api } from '../api'
 import { ageLabel, statusLabel } from '../utils/serverStatus'
 import NodeAlertToggle from './NodeAlertToggle.vue'
+import AgentHealthPanel from './AgentHealthPanel.vue'
 const props = defineProps({ serverId: { type: Number, required: true } })
 const emit = defineEmits(['close', 'saved'])
 const router = useRouter(), { servers } = useServers()

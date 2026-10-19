@@ -18,6 +18,7 @@ export const api = {
 
   /** 更新节点基本信息 */
   updateServer: (id, data) => http.post(`/api/server/${id}/update`, data),
+  agentHealth: (id, options = {}) => http.get(`/api/server/${id}/agent-health`, options),
   setNodeNotifications: (id, enabled) => http.post(`/api/server/${id}/notifications`, { enabled }),
   opsSession: () => http.get('/api/ops/session'),
   opsLogin: (password) => http.post('/api/ops/login', { password }),

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from core.agent import Report, accept_report, token_digest
+from core.agent_health import agent_health
 from core.status import freshness
 from models.models import Server, ServerStats, AgentCredential, AlertConfig
 from worker import tasks
@@ -107,6 +108,76 @@ class AgentTests(unittest.TestCase):
             return {'cpu_percent':99},True,''
         with patch.object(tasks,'collect_server_data',switch): tasks._do_monitor_server(1)
         with self.Session() as db: self.assertEqual(db.get(Server,1).latest_status_data['cpu_percent'],42)
+
+    def test_health_reports_freshness_boundaries_and_actual_receipt(self):
+        self.node()
+        with self.Session() as db:
+            accept_report(db, self.report(sampled_at=(self.now-timedelta(minutes=5)).isoformat()+'Z'), 'a'*43, self.now)
+            server = db.get(Server, 1)
+            before = json.dumps(server.latest_status_data)
+            for seconds, expected in [(0, 'online'), (720, 'online'), (721, 'stale'), (960, 'stale'), (961, 'offline')]:
+                health = agent_health(server, True, self.now+timedelta(seconds=seconds))
+                self.assertEqual(health['status'], expected)
+                self.assertEqual(health['available'], expected == 'online')
+                self.assertEqual(health['report_age_seconds'], seconds)
+                self.assertEqual(health['last_received_at'], self.now.isoformat()+'Z')
+                self.assertEqual(health['last_sampled_at'], (self.now-timedelta(minutes=5)).isoformat()+'Z')
+            self.assertEqual(json.dumps(server.latest_status_data), before)
+            self.assertFalse(db.dirty)
+            # Resetting an offline node must not turn its previous report into a fresh one.
+            server.status = 'pending'
+            server.latest_status_data = {**server.latest_status_data, 'collection_reset_at': self.now.isoformat()+'Z'}
+            self.assertEqual(agent_health(server, True, self.now)['status'], 'pending')
+            self.assertEqual(agent_health(server, True, self.now+timedelta(seconds=961))['status'], 'offline')
+
+    def test_health_requires_report_and_active_credentials(self):
+        self.node()
+        with self.Session() as db:
+            server = db.get(Server, 1)
+            for receipt in [None, 'broken']:
+                server.latest_status_data = {'received_at': receipt}
+                health = agent_health(server, True, self.now)
+                self.assertEqual(health['status'], 'pending')
+                self.assertFalse(health['available'])
+                self.assertIsNone(health['last_received_at'])
+            accept_report(db, self.report(), 'a'*43, self.now)
+            health = agent_health(server, False, self.now)
+            self.assertEqual(health['status'], 'unconfigured')
+            self.assertFalse(health['available'])
+
+    def test_health_http_is_read_only_and_omits_secrets(self):
+        self.node()
+        def session():
+            with self.Session() as db: yield db
+        main.app.dependency_overrides[main.get_db] = session
+        client = TestClient(main.app)
+        try:
+            url = '/api/server/1/agent-health'
+            self.assertEqual(client.get(url).json()['status'], 'pending')
+            with self.Session() as db:
+                accept_report(db, self.report(), 'a'*43, self.now)
+                before = json.dumps(db.get(Server, 1).latest_status_data)
+            response = client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()['available'])
+            self.assertNotIn(token_digest('a'*43), response.text)
+            self.assertNotIn('a'*43, response.text)
+            self.assertNotIn('ssh_password', response.text)
+            with self.Session() as db:
+                self.assertEqual(json.dumps(db.get(Server, 1).latest_status_data), before)
+                self.assertEqual(db.get(Server, 1).status, 'online')
+                self.assertEqual(db.query(ServerStats).count(), 0)
+                db.delete(db.get(AgentCredential, 1)); db.commit()
+            self.assertEqual(client.get(url).json()['status'], 'unconfigured')
+            with self.Session() as db:
+                db.get(Server, 1).collection_mode = 'ssh'; db.commit()
+            self.assertEqual(client.get(url).status_code, 409)
+            with self.Session() as db:
+                db.get(Server, 1).is_active = False; db.commit()
+            self.assertEqual(client.get(url).status_code, 404)
+            self.assertEqual(client.get('/api/server/999/agent-health').status_code, 404)
+        finally:
+            client.close(); main.app.dependency_overrides.clear()
 
     def test_history_deduplicates_sample_and_preserves_sample_time(self):
         self.node()

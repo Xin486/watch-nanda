@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from models.database import SessionLocal, get_db
 from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCredential
 from core.agent import Report, accept_report
+from core.agent_health import agent_health
 from worker.tasks import send_email_wrapper, start_scheduler, stop_scheduler, monitor_once
 from core.status import server_payload
 from core.history import history_payload
@@ -146,6 +147,18 @@ def get_servers(group: str = None, db: Session = Depends(get_db)):
     servers = query.all()
 
     return [server_payload(server) for server in servers]
+
+
+@app.get('/api/server/{server_id}/agent-health')
+def get_agent_health(server_id: int, db: Session = Depends(get_db)):
+    server = db.get(Server, server_id)
+    if not server or not server.is_active:
+        raise HTTPException(404, '节点不存在')
+    if server.collection_mode != 'agent':
+        raise HTTPException(409, '该节点尚未配置为 Agent 主动上报')
+    # Only check existence; never return the credential or change collection state.
+    configured = db.query(AgentCredential.server_id).filter(AgentCredential.server_id == server_id).first() is not None
+    return agent_health(server, configured)
 
 
 @app.post("/api/servers/add")

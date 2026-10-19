@@ -144,3 +144,34 @@ test('node metrics update while unsaved edits remain intact; save can be repeate
   await h.save();assert.equal(h.saving.value,false)
   await h.save();assert.equal(writes,2)
 })
+
+test('Agent check requests fresh diagnostics without saving or mutating node configuration',async()=>{
+  const requests=[];let writes=0
+  const h=setup('components/AgentHealthPanel.vue',['checkAgent','checking','result','error'],{
+    api:{agentHealth:(id,options)=>{const d=deferred();requests.push({...d,id,options});return d.promise},updateServer:()=>writes++},
+  })
+  assert.equal(requests.length,0)
+  const first=h.checkAgent();await h.checkAgent()
+  assert.equal(h.checking.value,true);assert.equal(requests.length,1);assert.equal(requests[0].id,1)
+  requests[0].resolve({data:{status:'online',available:true}});await first
+  assert.equal(h.result.value.status,'online');assert.equal(h.checking.value,false)
+  const second=h.checkAgent()
+  assert.equal(h.result.value,null)
+  requests[1].resolve({data:{status:'offline',available:false}});await second
+  assert.equal(h.result.value.status,'offline');assert.equal(writes,0)
+})
+
+test('Agent check can retry errors and cancels when the detail panel closes',async()=>{
+  const requests=[]
+  const h=setup('components/AgentHealthPanel.vue',['checkAgent','checking','result','error'],{
+    api:{agentHealth:(id,options)=>{const d=deferred();requests.push({...d,options});return d.promise}},
+  })
+  const first=h.checkAgent();requests[0].reject({response:{data:{detail:'节点不存在'}}});await first
+  assert.equal(h.error.value,'节点不存在');assert.equal(h.checking.value,false)
+  const second=h.checkAgent();assert.equal(h.error.value,'')
+  h.unmounts[0]()
+  assert.equal(requests[1].options.signal.aborted,true)
+  requests[1].resolve({data:{status:'online'}});await second
+  assert.equal(h.result.value,null)
+  await h.checkAgent();assert.equal(requests.length,2)
+})

@@ -131,6 +131,8 @@ systemd 模式日志使用 `journalctl -u watch-nanda-backend`；停止、启动
 
 点击已有节点卡片可查看运行状态、显卡详情及节点配置；底部「测试 SSH」进入该节点的连接测试，「进入运维命令行」打开独立运维页。侧边栏「运维命令行」也可选择已有节点。运维页只提供连接测试和命令行，不包含 Agent 部署按钮。
 
+已有 Agent 节点的「节点配置」提供「检测 Agent 上报可用性」，即时查询平台最近接收的有效上报、接收时间与采样时间，并按现有超时规则显示正常、延迟、离线或待上报。该检查只读、不连接 SSH、不重启服务；下方提示栏提供在节点查看 `node-monitor-agent` 服务状态与最近日志的命令。检测缺少上报凭据时会提示先完成部署或重新配置，不会展示 Token。
+
 Agent 部署仅从「增加服务器」流程进入：选择 Agent 采集后点击「添加并部署 Agent」，先创建节点，再跳转到 `/servers/new/:id/agent` 为该新节点检查并安装。部署页固定目标节点，只显示连接身份、环境检查和部署日志，不包含命令行。安装仍需点击「一键部署 Agent」才开始；刷新部署页可以继续查看任务。原 `/agents` 和 `/nodes/:id/agent` 书签转到运维页面。
 
 首次部署网页运维需在中心运行 `sudo python3 backend/manage_ops.py`，交互设置至少 12 字符的运维口令。口令仅保存 PBKDF2 校验摘要，默认文件 `/etc/node-monitor/ops-password.json`（权限 600，可用 `OPS_PASSWORD_FILE` 指定）。网页运维仅允许同源 HTTPS；登录使用 Secure、HttpOnly、SameSite=Strict Cookie，有效期 1 小时。运维口令与系统账号密码独立，系统 root 密码变化后需单独重新设置。
