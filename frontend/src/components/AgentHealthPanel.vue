@@ -10,9 +10,9 @@
       <dl><div><dt>最近接收</dt><dd>{{ timeLabel(result.last_received_at) }}</dd></div><div><dt>最近采样</dt><dd>{{ timeLabel(result.last_sampled_at) }}</dd></div></dl>
     </div>
     <p v-if="error" class="health-error" role="alert">{{ error }}</p>
-    <div v-if="result && result.status !== 'online' && !hideRedeploy" class="redeploy-entry">
-      <div><strong>修复或重新部署 Agent</strong><p>先检查节点网络、证书和时钟。需要修复采集服务时，可在独立页面重新部署，保留节点和历史数据。</p></div>
-      <router-link class="health-button" :to="`/nodes/${serverId}/agent/redeploy`">进入 Agent 重部署 ↗</router-link>
+    <div v-if="!hideRedeploy" class="redeploy-entry">
+      <div><strong>修复或重新部署 Agent</strong><p>需要修复或更新采集服务时，可进入独立页面重新部署，保留节点和历史数据；进入页面不会开始安装。</p></div>
+      <router-link class="health-button" :to="`/nodes/${serverId}/agent/redeploy`">重新部署 Agent ↗</router-link>
     </div>
     <div class="service-hints"><strong>在该节点服务器上检查</strong><div><span>服务状态</span><code>sudo systemctl status node-monitor-agent --no-pager</code></div><div><span>最近日志</span><code>sudo journalctl -u node-monitor-agent -n 30 --no-pager</code></div><p>检测依据平台已接收的数据，不会登录或重启节点。异常时可在运维命令行执行以上命令。</p></div>
   </section>

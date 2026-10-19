@@ -81,7 +81,7 @@ watch-nanda/
 - `useServers` 是共享单例：SSE 为主、REST 首次加载和断流兜底。保留乱序响应保护、请求取消、订阅清理和编辑表单保护。
 - 前端经同源 HTTPS 访问 API，开发/预览也通过 Vite 代理；后端不再维护旧的通配 CORS 配置。后端通过启动脚本或 Uvicorn CLI 启动，只监听回环地址，不提供 `python main.py` 的对外调试入口。
 - 历史 1–7 天返回原始快照，超过 7 天按北京时间自然日聚合。缺失、离线、过期和无 GPU 保留缺口，不伪造为 0；平均值按有效原始样本加权。显存利用率、GPU 计算利用率和功率是不同指标。
-- 已有节点运维页是 `/operations` 或 `/nodes/:id/operations`，只做连接检查和终端。首次部署页为 `/servers/new/:id/agent`；已有 Agent 的上报检查异常结果提供 `/nodes/:id/agent/redeploy` 独立修复页，固定目标、复用运维认证与部署逻辑，不带终端；旧 `/agents`、`/nodes/:id/agent` 仍重定向到运维。
+- 已有节点运维页是 `/operations` 或 `/nodes/:id/operations`，只做连接检查和终端。首次部署页为 `/servers/new/:id/agent`；已有 Agent 的上报检查区域始终显示「重新部署 Agent」入口（检测前、正常或异常均可进入），提供 `/nodes/:id/agent/redeploy` 独立修复页，固定目标、复用运维认证与部署逻辑，不带终端；旧 `/agents`、`/nodes/:id/agent` 仍重定向到运维。
 - 手动 SSH 凭据在验证成功后按页面请求加密同步；失败不能覆盖已存凭据。SSH 节点先进入待采集并重新排队，采集成功才在线；Agent 节点保留采集模式和 Token。配置变化后丢弃旧采集结果。
 - Agent 健康检查只查平台上报状态，不连接 SSH、不重启节点、不轮换 Token。节点邮件铃铛同时控制离线/恢复提醒，并受全局开关控制。
 - 重部署使用受运维认证保护的 `/api/ops/nodes/:id/redeploy`，仅适用于已有 Agent 节点；必须主动点击才开始，保留节点 ID、分组和历史，更新 Token/程序，失败恢复原凭据与服务。提交时及签发凭据前均校验采集模式，不能误把已切回 SSH 的节点重新切换。
@@ -96,7 +96,7 @@ watch-nanda/
 - 平台 `https://192.168.1.24`；雷池控制台 `https://192.168.1.24:9443`。管理入口允许 `192.168.1.0/24`，包括 SD-WAN SNAT 网关 `.199`，不得再次单独拒绝该网关。外部入口只开放 Agent 上报路径。
 - 生产流量为 Nginx HTTPS 443 → 雷池 8088 → 回环 Nginx 18080 → 静态前端或回环 FastAPI 7980。前端发布目录为 `/var/www/watch-nanda`；后端由 `watch-nanda-backend.service` 管理。
 - 2026-10-19 实际后端使用 `/usr/bin/python3`，尚无 `backend/.venv`；`setup.sh` 新式部署会创建 venv。升级前先核对 systemd 实际 ExecStart，不要假定仓库模板等于现场。
-- systemd 服务由 `scripts/lifecycle.py` 生成，没有独立静态后端服务模板；表和索引由 `scripts/initialize.py` 幂等补齐。升级与恢复按 `docs/DEPLOYMENT.md` 执行；依赖、表结构与服务配置未改变时，可按其中的小范围发布流程保留现场环境，仅更新源码、静态资源、匹配的 Agent 包并重启后端。
+- systemd 服务由 `scripts/lifecycle.py` 生成，没有独立静态后端服务模板；表和索引由 `scripts/initialize.py` 幂等补齐。升级与恢复按 `docs/DEPLOYMENT.md` 执行；依赖、表结构与服务配置未改变时，可按其中的小范围发布流程保留现场环境，按改动范围更新源码、静态资源和匹配的 Agent 包，必要时重启后端；仅前端/文档变化不重启后端。
 - 7980 仅监听 `127.0.0.1`，旧 80/3000 未开放；前端/API/SSE 同源 HTTPS，终端使用 WSS。回环代理和本机健康检查可用 HTTP。
 - `deploy/production/nginx.conf` 是基础配置，不是当前完整 WAF 配置。保留现场 `watch-nanda-managed-root` 归属标记、WAF 代理、访问策略、SSE 无缓冲和 WebSocket Upgrade；不得直接用基础模板覆盖现场。
 - 雷池控制台代理为 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` → `https://127.0.0.1:19443`；证书与 CA 在 `/etc/node-monitor/tls/`。

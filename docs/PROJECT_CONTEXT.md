@@ -37,7 +37,7 @@ REST 和 SSE 都调用 `core/status.py`。前端 `useServers` 处理共享 SSE �
 | SMTP 与告警规则 | `Settings.vue` | 配置 API、`worker/tasks.py` |
 | 已有节点 SSH 检测和交互终端 | `NodeOperations.vue`、`useNodeAccess.js`、`RemoteTerminal.vue` | `core/operations.py`、`core/ops_auth.py` |
 | 新节点 Agent 部署 | `AgentDeploy.vue`、连接/运维布局组件 | 部署任务 → `agent_job.py` → `scripts/install_agent.py` → `agent/install_node.py` |
-| 已有 Agent 重部署 | `AgentHealthPanel.vue` → `AgentRedeploy.vue`（复用部署界面） | 受认证 redeploy API、Agent 模式检查、既有安装器和失败回滚 |
+| 已有 Agent 重部署 | `AgentHealthPanel.vue` 常驻入口 → `AgentRedeploy.vue`（复用部署界面） | 受认证 redeploy API、Agent 模式检查、既有安装器和失败回滚 |
 | 管理页主题与图表配色 | `useTheme.js`、`utils/theme.js`、`styles/theme.css` | 不改变采集和数据接口 |
 | 初始化、启停与部署归属检查 | 根目录 Shell 入口 | `scripts/initialize.py`、`scripts/lifecycle.py`、`deploy/production/` |
 
