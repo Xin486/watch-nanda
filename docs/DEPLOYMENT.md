@@ -23,13 +23,14 @@ HTTPS 9443 → Nginx → https://127.0.0.1:19443 雷池控制台
 | 雷池控制台代理 | `deploy/production/safeline-console.conf`；生产副本 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` |
 | TLS | `/etc/node-monitor/tls/`；节点只需受信任的 CA 公钥证书 |
 | SSH 密码加密 | `/etc/node-monitor/ssh-credentials.key`，或 `SSH_CREDENTIAL_KEY_FILE` 指定的文件 |
+| 常用 SSH 凭据 | `/etc/node-monitor/ssh-profiles.json`，或 `SSH_PROFILES_FILE` 指定；权限 600，使用 SSH 独立密钥加密，须一起备份 |
 | 网页运维口令摘要 | `/etc/node-monitor/ops-password.json`，或 `OPS_PASSWORD_FILE` 指定的文件 |
 
 2026-10-19 生产后端仍使用 `/usr/bin/python3`；新式 `setup.sh` 会建立 `backend/.venv` 并更新服务。不要把现场旧依赖环境直接写死到新的服务文件。
 
 ## 标准升级
 
-先检查当前分支、工作区差异、`systemctl cat watch-nanda-backend` 及 Nginx 的项目归属。备份数据库配置、节点配置、`.env`、独立加密密钥和现场代理配置；备份按受保护的运维流程保存，不提交 Git。保留既有历史数据备份策略。
+先检查当前分支、工作区差异、`systemctl cat watch-nanda-backend` 及 Nginx 的项目归属。备份数据库配置、节点配置、`.env`、独立加密密钥、常用 SSH 凭据文件和现场代理配置；备份按受保护的运维流程保存，不提交 Git。保留既有历史数据备份策略。
 
 在维护窗口使用当前部署所需的管理员账户：
 
@@ -50,7 +51,7 @@ sudo bash start.sh
 
 ## 已有生产的小范围发布
 
-若依赖、数据库结构和服务配置均未改变，可保留实际运行环境进行小范围发布：先确认生产工作区干净、无运行中的部署任务，保存当前提交、静态文件和 Agent 包的受保护备份；只读迁移检查通过后，将源码快进到已推送的提交。
+若依赖、数据库结构和服务配置均未改变，可保留实际运行环境进行小范围发布：先确认生产工作区干净、无运行中的部署任务及等待处理的批量队列（`/api/ops/agent-batches` 需运维登录读取），保存当前提交、静态文件和 Agent 包的受保护备份；只读迁移检查通过后，将源码快进到已推送的提交。
 
 使用锁文件对应的前端构建结果发布，保留旧哈希资源，最后原子替换首页。将经过清单及源码哈希校验、原生自检的 Agent 包和两个摘要侧文件一起替换，再重启 `watch-nanda-backend.service`。不需要改动时保留 Nginx/WAF、systemd 配置和依赖环境，不执行初始化或迁移写入。仅前端和文档变化时，只更新对应源码与静态文件，不必替换未变化的 Agent 包或重启后端。发布后验证 HTTPS、API、SSE、WSS 路由及 Agent 上报；记录可恢复的备份路径。回退时恢复原提交、首页与 Agent 包并重启后端，不回退或覆盖数据库。
 
@@ -72,6 +73,8 @@ python3 migrate_agent.py --require-ready
 确实缺失时，在备份及维护窗口内运行 `python3 migrate_agent.py`。该脚本幂等，不重建 `server_stats`，不重置节点 ID、已有采集方式或 Token。MySQL DDL 会隐式提交，部分失败后应排查并重跑，不能假定事务整体回滚。
 
 ## 发布验证与恢复
+
+常用凭据文件在首次保存时创建；读取列表不写文件，不需运行数据库迁移。批量重部署 API 与常用凭据 API 均在 `/api/ops/` 下，复用同源 HTTPS 运维认证。批次和手动密码不持久化，升级重启前应结束或停止当前队列，不能将重启后的空列表视为节点已恢复。
 
 检查后端和 Nginx 服务状态、HTTPS 页面/API/SSE、WSS 运维入口，以及节点最近上报/采集时间；确认 7980 仅回环监听、管理访问策略和雷池链路未改变。前端发布保留旧哈希资源，最后替换首页，兼容已打开的页面。
 

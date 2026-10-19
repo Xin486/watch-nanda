@@ -4,9 +4,11 @@
       <h2>数据清理与节点管理</h2>
       <p class="desc">您可以在此页面管理服务器节点及其产生的历史负载数据。红色按钮为高危操作，请谨慎点击。</p>
       
+      <section class="batch-entry" aria-label="批量重新部署 Agent"><div><h3>批量重新部署 Agent</h3><p>自动选择已使用 Agent 的节点，或逐台勾选；进入独立页面后按队列部署，不清理节点或历史数据。</p></div><div class="batch-actions"><button class="btn-view" :disabled="!agents.length" @click="selectAllAgents">自动选择已部署 Agent（{{ agents.length }} 台）</button><button class="btn-view" :disabled="!selectedIds.length" @click="selectedIds = []">清空选择</button><button class="btn-view" :disabled="!selected.length" @click="openBatch">一键批量重部署（已选 {{ selected.length }} 台）↗</button></div></section>
       <table class="data-table">
         <thead>
           <tr>
+            <th>批量选择</th>
             <th>ID</th>
             <th>主机名</th>
             <th>IP 地址</th>
@@ -17,6 +19,7 @@
         </thead>
         <tbody>
           <tr v-for="server in servers" :key="server.id">
+            <td><input v-model="selectedIds" type="checkbox" :value="server.id" :disabled="server.collection_mode !== 'agent'" :aria-label="'选择 '+server.hostname+' 重新部署 Agent'"><small v-if="server.collection_mode !== 'agent'">SSH 节点</small></td>
             <td>{{ server.id }}</td>
             <td><strong>{{ server.hostname }}</strong></td>
             <td><span class="ip-text">{{ server.ip_address }}</span></td>
@@ -40,12 +43,19 @@
 
 <script setup>
 // 数据清理页：历史数据清理与节点删除
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { eligibleAgents, selectedAgents } from '../utils/batchSelection'
 import { statusLabel } from '../utils/serverStatus'
 import { api } from '../api'
 import { useServers } from '../composables/useServers'
 
 const { servers, subscribe } = useServers()
+const router = useRouter(), selectedIds = ref([])
+const agents = computed(() => eligibleAgents(servers.value))
+const selected = computed(() => selectedAgents(servers.value, selectedIds.value))
+function selectAllAgents() { selectedIds.value = agents.value.map(node => node.id) }
+function openBatch() { if (selected.value.length) router.push({ path: '/agents/batch-redeploy', query: { nodes: selected.value.map(node => node.id).join(',') } }) }
 
 // 🧹 清理该节点的所有折线图历史数据
 const cleanHistory = async (server) => {
@@ -81,6 +91,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.batch-entry{padding:18px;border:1px solid var(--accent-border);background:var(--accent-soft);border-radius:10px;margin:20px 0}.batch-entry h3{font-size:15px;margin:0}.batch-entry p{color:var(--text-muted);font-size:12px;line-height:1.8}.batch-actions{display:flex;gap:10px;flex-wrap:wrap}.batch-actions button:disabled{opacity:.5;cursor:not-allowed}.data-table input[type=checkbox]{accent-color:var(--accent)}.data-table small{display:block;font-size:10px;color:var(--text-muted)}
 .cleanup-page { padding: 30px 32px; color: var(--text); }
 .panel { overflow-x:auto; background:var(--surface); padding: 25px; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
 h2 { margin-top: 0; color: var(--text); }

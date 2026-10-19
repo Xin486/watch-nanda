@@ -36,6 +36,8 @@ REST 和 SSE 都调用 `core/status.py`。前端 `useServers` 处理共享 SSE �
 | 历史曲线、均值/峰值、数据清理 | `History.vue`、`Cleanup.vue`、`historyChart.js` | `core/history.py`、历史查询/删除 API |
 | SMTP 与告警规则 | `Settings.vue` | 配置 API、`worker/tasks.py` |
 | 已有节点 SSH 检测和交互终端 | `NodeOperations.vue`、`useNodeAccess.js`、`RemoteTerminal.vue` | `core/operations.py`、`core/ops_auth.py` |
+| 常用 SSH 凭据 | `Settings.vue` → `SshCredentials.vue`、`useOperatorSession.js`、`OperatorGate.vue` | `core/ssh_profiles.py`；受认证、Fernet 加密文件、密码不回显 |
+| 批量 Agent 重部署 | `Cleanup.vue` → `AgentBatchDeploy.vue` | `core/agent_batch.py`；串行队列、共用部署名额、优先常用/再已存/再手动、日志按需读取 |
 | 新节点 Agent 部署 | `AgentDeploy.vue`、连接/运维布局组件 | 部署任务 → `agent_job.py` → `scripts/install_agent.py` → `agent/install_node.py` |
 | 已有 Agent 重部署 | `AgentHealthPanel.vue` 常驻入口 → `AgentRedeploy.vue`（复用部署界面） | 受认证 redeploy API、Agent 模式检查、既有安装器和失败回滚 |
 | 管理页主题与图表配色 | `useTheme.js`、`utils/theme.js`、`styles/theme.css` | 不改变采集和数据接口 |

@@ -32,7 +32,9 @@ watch-nanda/
 │   │   ├── agent_health.py         # Agent 最近有效上报的只读诊断
 │   │   ├── ssh_credentials.py      # SSH 密码加密、解密与连接身份绑定
 │   │   ├── ops_auth.py             # 运维口令、会话、同源与 HTTPS 校验
-│   │   └── operations.py           # SSH 检测、指纹信任、WSS 终端、部署任务
+│   │   ├── operations.py           # SSH 检测、指纹信任、WSS 终端、部署任务
+│   │   ├── ssh_profiles.py         # 常用 SSH 凭据加密文件及受认证 CRUD
+│   │   └── agent_batch.py          # 批量重部署串行队列、凭据回退和节点日志
 │   ├── models/database.py          # 数据库引擎与 Session
 │   ├── models/models.py            # servers/server_stats/agent_credentials/
 │   │                              # email_configs/alert_configs 五张表
@@ -49,10 +51,11 @@ watch-nanda/
 │   ├── src/main.js / App.vue       # 初始化与全局壳层
 │   ├── src/router/index.js         # 页面路由与旧书签重定向
 │   ├── src/api.js                  # 同源 HTTPS API 封装
-│   ├── src/composables/            # useServers/useNodeAccess/useTheme
+│   ├── src/composables/            # useServers/useNodeAccess/useTheme/useOperatorSession
 │   ├── src/views/                  # Dashboard、BigScreen、History、Settings、
-│   │                              # Cleanup、NodeOperations、AgentDeploy、AgentRedeploy
-│   ├── src/components/             # 节点详情/新增、上报诊断、连接面板、
+│   │                              # Cleanup、NodeOperations、AgentDeploy、AgentRedeploy、
+│   │                              # AgentBatchDeploy、SshCredentials
+│   ├── src/components/             # OperatorGate、节点详情/新增、上报诊断、连接面板、
 │   │                              # 运维布局、远程终端、铃铛、图标及主题开关
 │   ├── src/utils/                  # 状态/指标、历史图表、主题、HTTPS 工具
 │   ├── src/styles/                 # 主题变量与运维共用样式
@@ -85,6 +88,9 @@ watch-nanda/
 - 手动 SSH 凭据在验证成功后按页面请求加密同步；失败不能覆盖已存凭据。SSH 节点先进入待采集并重新排队，采集成功才在线；Agent 节点保留采集模式和 Token。配置变化后丢弃旧采集结果。
 - Agent 健康检查只查平台上报状态，不连接 SSH、不重启节点、不轮换 Token。节点邮件铃铛同时控制离线/恢复提醒，并受全局开关控制。
 - 重部署使用受运维认证保护的 `/api/ops/nodes/:id/redeploy`，仅适用于已有 Agent 节点；必须主动点击才开始，保留节点 ID、分组和历史，更新 Token/程序，失败恢复原凭据与服务。提交时及签发凭据前均校验采集模式，不能误把已切回 SSH 的节点重新切换。
+- 数据清理页支持自动选择全部 Agent 采集节点或手动勾选，进入 `/agents/batch-redeploy` 独立页；进入页面不启动安装，运维登录后主动点击才创建 `/api/ops/agent-batches` 批次。批量队列串行执行并共享中心最多 2 个/同节点最多 1 个的任务名额；逐次执行前复查采集方式和地址，不能误切 SSH 节点。缺凭据/认证失败/未知指纹的节点单独等待，后续节点继续；可手动补密、明确确认指纹、重试所有等待凭据节点，或停止未开始的节点，不能中断正在部署/回滚的节点。
+- 常用凭据页 `/settings/ssh-credentials` 从设置页进入，API `/api/ops/ssh-profiles` 受运维认证保护；密码以现有独立 Fernet 密钥加密，绑定凭据 ID 与用户名，不回显、不放浏览器存储、不加入 Git。按优先级（小的先）尝试启用的常用凭据，再尝试节点已存凭据，同用户名最多自动认证 3 次；网络/主机指纹错误不继续试密码。全部失败等待手动输入；手动输入仅在内存中用于当前节点重试，不自动保存到常用列表或节点。
+- 批次元数据、日志与手动输入保存在当前单进程内，最多保留最近 5 个批次；服务重启后不能承诺恢复队列，应先核验节点状态再重新选择。进度轮询只读，日志按节点按需读取；退出登录和卸载页面清理浏览器密码及过期响应。
 - 安装器检查并验证节点到上报入口的出站 TCP/TLS；UFW/firewalld 仅添加目的 IP/端口的出站规则及持久配置，不开放入站、不关闭或重载防火墙、不覆盖其他规则。`--check-only` 只检查；部署失败恢复本次新增规则，无法确认远端恢复时保留规则及安装记录供核对。自定义 nftables/iptables 或上游 ACL 仍阻断时必须失败提示，不能伪报成功。
 - 安装包必须包含当前 `install_node.py`；修改安装器后重新构建匹配的 Linux 独立包。成功判定仍要求以 `node-monitor` 服务账户完成真实 HTTPS 上报并确认常驻服务运行，root 的 TLS 检查通过不能单独当作部署成功。
 - 管理页共用 `styles/theme.css`、`useTheme` 和主题工具；图表切换主题保留缩放和图例选择。远程终端保持深色；算力大屏保留其现有独立展示设计。
@@ -101,7 +107,7 @@ watch-nanda/
 - `deploy/production/nginx.conf` 是基础配置，不是当前完整 WAF 配置。保留现场 `watch-nanda-managed-root` 归属标记、WAF 代理、访问策略、SSE 无缓冲和 WebSocket Upgrade；不得直接用基础模板覆盖现场。
 - 雷池控制台代理为 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` → `https://127.0.0.1:19443`；证书与 CA 在 `/etc/node-monitor/tls/`。
 - MySQL 库为 `monitor_db`。已有库使用 `migrate_agent.py` 增量迁移，不重新导入 `monitor_db.sql`，不重建历史表，不删除数据卷，保留节点 ID 和历史记录。
-- SSH 只用密码与严格主机指纹验证，禁用私钥和 ssh-agent 回退。密码使用 Fernet；默认密钥 `/etc/node-monitor/ssh-credentials.key`。运维口令为独立 PBKDF2 摘要，默认 `/etc/node-monitor/ops-password.json`，不跟随系统密码变化。
+- SSH 只用密码与严格主机指纹验证，禁用私钥和 ssh-agent 回退。密码使用 Fernet；默认密钥 `/etc/node-monitor/ssh-credentials.key`。运维口令为独立 PBKDF2 摘要，默认 `/etc/node-monitor/ops-password.json`，不跟随系统密码变化。常用 SSH 凭据文件默认 `/etc/node-monitor/ssh-profiles.json`，可用 `SSH_PROFILES_FILE` 覆盖，权限 600、归属服务用户，须与独立加密密钥一起受保护备份。
 - Agent 数据库只存 Token 摘要；节点配置含真实 Token，不入库、不输出到聊天。Agent 只上报指标，无远程命令或自动更新通道；网页部署优先要求独立运行包，不能因缺包静默改用系统 Python 安装。
 - 生产操作按用户授权范围执行。项目理解、检查和文档维护本身不意味着部署、重启、运行迁移、轮换凭据或批量改节点；实际发布前核对现场差异与恢复办法。
 

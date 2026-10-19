@@ -34,3 +34,6 @@ agent/config.json
 .vscode/
 .idea/
 .DS_Store
+
+# 常用 SSH 凭据存储文件
+ssh-profiles.json

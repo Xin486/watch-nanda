@@ -325,6 +325,19 @@ def start_deployment(server_id, data, *, reinstall=False):
         client = connect_ssh(config)
         client.close()
         save_configuration(config)
+    job = reserve_deployment(server_id, reinstall=reinstall)
+    try:
+        workers.submit(run_deployment, job, config)
+    except Exception:
+        with guard:
+            active_jobs.pop(server_id, None)
+            jobs.pop(job['id'], None)
+        raise HTTPException(503, '部署任务暂不可用') from None
+    logger.info('Operator started Agent deployment for node %s, job %s', server_id, job['id'])
+    return job_payload(job)
+
+
+def reserve_deployment(server_id, *, reinstall=False):
     with guard:
         if server_id in active_jobs:
             raise HTTPException(409, '该节点已有部署任务，请勿重复点击')
@@ -341,15 +354,7 @@ def start_deployment(server_id, data, *, reinstall=False):
                'status': 'running', 'logs': [],
                'message': '正在检查 SSH、sudo、时钟、出站防火墙、证书及独立安装包', 'created_at': time.time()}
         jobs[job['id']], active_jobs[server_id] = job, job['id']
-    try:
-        workers.submit(run_deployment, job, config)
-    except Exception:
-        with guard:
-            active_jobs.pop(server_id, None)
-            jobs.pop(job['id'], None)
-        raise HTTPException(503, '部署任务暂不可用') from None
-    logger.info('Operator started Agent deployment for node %s, job %s', server_id, job['id'])
-    return job_payload(job)
+    return job
 
 
 @router.get('/jobs', dependencies=[Depends(require_operator)])

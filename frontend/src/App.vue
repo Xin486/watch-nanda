@@ -38,10 +38,10 @@
           <NavIcon class="icon" name="history"/> 历史负载
         </router-link>
         <router-link to="/operations" class="menu-item" :class="{ active: $route.path === '/operations' || $route.path.endsWith('/operations') }"><NavIcon class="icon" name="terminal"/> 运维命令行</router-link>
-        <router-link to="/settings" class="menu-item" active-class="active">
+        <router-link to="/settings" class="menu-item" active-class="active" :class="{ active: $route.path.startsWith('/settings/') }">
           <NavIcon class="icon" name="settings"/> 设置
         </router-link>
-        <router-link to="/cleanup" class="menu-item" active-class="active">
+        <router-link to="/cleanup" class="menu-item" active-class="active" :class="{ active: $route.path === '/agents/batch-redeploy' }">
           <NavIcon class="icon" name="trash"/> 数据清理
         </router-link>
       </nav>

@@ -32,12 +32,16 @@ from core.status import server_payload
 from core.history import history_payload
 from core.ssh_credentials import encrypt_password
 from core.operations import router as operations_router, assert_idle
+from core.ssh_profiles import router as ssh_profiles_router
+from core.agent_batch import router as agent_batch_router
 
 # ---------------------------------------------------------------------------
 # 应用初始化
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Node Monitor API")
 app.include_router(operations_router)
+app.include_router(ssh_profiles_router)
+app.include_router(agent_batch_router)
 
 
 @app.exception_handler(RequestValidationError)

@@ -18,6 +18,17 @@ export const api = {
 
   /** 更新节点基本信息 */
   updateServer: (id, data) => http.post(`/api/server/${id}/update`, data),
+  sshProfiles: () => http.get('/api/ops/ssh-profiles'),
+  createSshProfile: data => http.post('/api/ops/ssh-profiles', data),
+  updateSshProfile: (id, data) => http.put('/api/ops/ssh-profiles/'+id, data),
+  deleteSshProfile: id => http.delete('/api/ops/ssh-profiles/'+id),
+  agentBatches: () => http.get('/api/ops/agent-batches'),
+  agentBatch: (id, options = {}) => http.get('/api/ops/agent-batches/'+id, options),
+  agentBatchNode: (batch, node) => http.get('/api/ops/agent-batches/'+batch+'/nodes/'+node),
+  createAgentBatch: serverIds => http.post('/api/ops/agent-batches', { server_ids: serverIds }),
+  retryAgentBatchNode: (batch, node, data = {}) => http.post('/api/ops/agent-batches/'+batch+'/nodes/'+node+'/retry', data),
+  retryAgentBatchWaiting: id => http.post('/api/ops/agent-batches/'+id+'/retry-waiting'),
+  stopAgentBatch: id => http.post('/api/ops/agent-batches/'+id+'/stop'),
   agentHealth: (id, options = {}) => http.get(`/api/server/${id}/agent-health`, options),
   setNodeNotifications: (id, enabled) => http.post(`/api/server/${id}/notifications`, { enabled }),
   opsSession: () => http.get('/api/ops/session'),

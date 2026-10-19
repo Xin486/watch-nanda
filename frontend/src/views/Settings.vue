@@ -2,6 +2,7 @@
   <div class="settings-page">
     <div class="sync-status" :class="{ failed: syncError }">{{ syncError || (loading ? '正在同步服务器配置…' : '配置已同步 · 修改后点击保存') }}<button v-if="syncError" @click="loadConfigs">重试同步</button></div>
     <div class="settings-grid">
+      <div class="panel"><h2>常用 SSH 用户名和密码</h2><p class="desc">集中维护加密保存的常用登录凭据，供批量 Agent 重部署按优先级尝试。查看和修改需要运维登录。</p><router-link to="/settings/ssh-credentials">管理常用 SSH 凭据 ↗</router-link></div>
       <!-- 基础设置 -->
       <div class="panel">
         <h2>系统设置</h2>
