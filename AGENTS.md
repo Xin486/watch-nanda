@@ -64,7 +64,7 @@ watch-nanda/
 │   └── package*.json               # 依赖与锁文件
 ├── agent/
 │   ├── monitor_agent.py            # 节点本机采样与 HTTPS 主动上报
-│   ├── install_node.py             # 节点侧 release 准备/激活/回滚
+│   ├── install_node.py             # 节点部署会话、旧进程终止、覆盖准备/激活/回滚
 │   ├── build.sh / build_bundle.py  # 含 Python 运行时的 Linux 独立包
 │   ├── node-monitor-agent.service  # 低权限常驻服务
 │   ├── config.example.json         # 不含真实 Token 的配置模板
@@ -94,6 +94,7 @@ watch-nanda/
 - 批次元数据、日志与手动输入保存在当前单进程内，最多保留最近 5 个批次；服务重启后不能承诺恢复队列，应先核验节点状态再重新选择。进度轮询只读，日志按节点按需读取；退出登录和卸载页面清理浏览器密码及过期响应。
 - 安装器检查并验证节点到上报入口的出站 TCP/TLS；UFW/firewalld 仅添加目的 IP/端口的出站规则及持久配置，不开放入站、不关闭或重载防火墙、不覆盖其他规则。`--check-only` 只检查；部署失败恢复本次新增规则，无法确认远端恢复时保留规则及安装记录供核对。自定义 nftables/iptables 或上游 ACL 仍阻断时必须失败提示，不能伪报成功。
 - 安装包必须包含当前 `install_node.py`；修改安装器后重新构建匹配的 Linux 独立包。成功判定仍要求以 `node-monitor` 服务账户完成真实 HTTPS 上报并确认常驻服务运行，root 的 TLS 检查通过不能单独当作部署成功。
+- 首次部署和重部署统一覆盖，不因旧 Agent 健康跳过；`--check-only` 保持只读。中心通过带心跳的 SSH 会话持有 `/run/watch-nanda-agent-session.lock` 直至结束，会话 EOF 或 45 秒无心跳释放；节点单步仍用原操作锁并核对会话归属，失效会话拒绝写入。先准备新版、备份当前状态、确认项目旧服务及遗留进程 TERM/KILL 后完全停止并移除旧 unit/config/current，才允许中心签发 Token；失败恢复本次备份，成功后清理旧 releases、旧源码和 venv。旧 `.install-pending.json` 在独占会话内自动归档到 `.install-history/` 后接管，不要求人工清锁；仍在执行的部署不能被覆盖。不能杀死非本项目进程；D 状态/停止超时必须明确失败，不能继续轮换 Token 或自动重启整机/GPU。子命令超时后的进程回收也必须有时限；无法确认恢复时保留凭据、网络规则及受保护记录。
 - 管理页共用 `styles/theme.css`、`useTheme` 和主题工具；图表切换主题保留缩放和图例选择。远程终端保持深色；算力大屏保留其现有独立展示设计。
 - 后端调度、运维会话、部署任务与终端注册表在单进程内；不要直接增加多个 Uvicorn worker，否则会重复调度且状态不共享。部署任务中心并行上限为 2，同节点最多 1 个。
 

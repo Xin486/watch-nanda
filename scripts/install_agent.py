@@ -12,6 +12,7 @@ import shlex
 import sys
 import tarfile
 import time
+from threading import Event, Thread
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
@@ -78,6 +79,54 @@ class Remote:
         self.password = password
         self.root = False
         self.installer = None
+        self.session = None
+        self.session_stop = Event()
+        self.session_lost = Event()
+
+    def start_session(self, stage):
+        prefix = shlex.quote(self.installer)+' --installer' if self.installer else 'python3 '+shlex.quote(stage+'/install_node.py')
+        script = f'{prefix} session --stage {shlex.quote(stage)}'
+        command = 'bash -c '+shlex.quote(script)
+        if not self.root:
+            command = "sudo -S -p '' -- "+command
+        stdin, stdout, stderr = self.client.exec_command(command, timeout=15)
+        self.session = (stdin, stdout, stderr)
+        if not self.root:
+            stdin.write(self.password+'\n'); stdin.flush()
+        try:
+            result = json.loads(stdout.readline(4096))
+        except (OSError, ValueError):
+            raise InstallError('无法建立目标机独占部署会话，请检查 sudo/SSH 后重试') from None
+        if not result.get('ok') or not result.get('session'):
+            raise InstallError(result.get('error', '无法建立目标机独占部署会话'))
+        def heartbeat():
+            while not self.session_stop.wait(10):
+                try:
+                    if stdout.channel.exit_status_ready():
+                        raise OSError()
+                    stdin.write('.\n'); stdin.flush()
+                except (OSError, EOFError):
+                    self.session_lost.set()
+                    stdout.channel.close()
+                    return
+        self.heartbeat = Thread(target=heartbeat, daemon=True)
+        self.heartbeat.start()
+
+    def assert_session(self):
+        if self.session is None or self.session_lost.is_set() or self.session[1].channel.exit_status_ready():
+            raise InstallError('目标机独占部署会话已中断，请重新发起覆盖安装')
+
+    def close_session(self):
+        self.session_stop.set()
+        if self.session:
+            try:
+                self.session[0].channel.shutdown_write()
+            except (OSError, EOFError):
+                pass
+            finally:
+                self.session[1].channel.close()
+        if hasattr(self, 'heartbeat'):
+            self.heartbeat.join(timeout=1)
 
     def run(self, script, *, root=False, timeout=900):
         command = 'bash -c ' + shlex.quote(script)
@@ -116,12 +165,16 @@ class Remote:
         return output.decode('utf-8').strip()
 
     def helper(self, stage, action, **kwargs):
+        if self.session is not None:
+            self.assert_session()
         arguments = ' '.join(shlex.quote(str(x)) for pair in kwargs.items() for x in ('--'+pair[0].replace('_','-'), pair[1]))
         prefix = shlex.quote(self.installer)+' --installer' if self.installer else 'python3 '+shlex.quote(stage+'/install_node.py')
         value = self.run(f'{prefix} {action} --stage {shlex.quote(stage)} {arguments}', root=True)
         result = json.loads(value)
         if not result.get('ok'):
-            raise InstallError(result.get('error', '节点安装失败'))
+            error = InstallError(result.get('error', '节点安装失败'))
+            error.recovery_required = bool(result.get('recovery_required'))
+            raise error
         return result
 
     def put(self, stage, name, content, mode=0o644):
@@ -213,20 +266,6 @@ def restore_credentials(db, snapshot, digest):
     db.commit()
 
 
-def already_healthy(server, credential, check, url, ca_hash, bundle_hash=None):
-    from core.status import collection_time
-    from datetime import datetime
-    received = collection_time({'timestamp':(server.latest_status_data or {}).get('received_at')}) if server else None
-    return bool(server is not None and credential is not None and server.collection_mode == 'agent'
-                and received and 0 <= (datetime.utcnow()-received).total_seconds() <= 720
-                and check.get('active') and check.get('server_id') == server.id
-                and check.get('config_safe') and check.get('account_safe')
-                and (not bundle_hash or check.get('bundle_sha256')==bundle_hash)
-                and check.get('token_hash') == credential.token_hash and check.get('url') == url
-                and check.get('program_hash') == hashlib.sha256((ROOT/'agent'/'monitor_agent.py').read_bytes()).hexdigest()
-                and check.get('ca_hash') == ca_hash and check.get('interval_seconds') == 300)
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description='在监控中心输入节点 IP/密码，一次性 SSH 检查并安装 HTTPS Agent；不创建免密密钥')
     parser.add_argument('--ip', help='目标 SSH IP；省略时交互输入')
@@ -298,6 +337,7 @@ def install(args, password, *, known_hosts_only=False):
     bundle_hash = None
     snapshot = digest = release = None
     activated = completed = False
+    session_started = False
     preserve_stage = False
     with SessionLocal() as db:
         try:
@@ -350,6 +390,9 @@ def install(args, password, *, known_hosts_only=False):
             ca = args.ca_file.read_bytes() if args.ca_file else None
             if ca:
                 remote.put(stage, 'ca.crt', ca)
+            if not args.check_only:
+                remote.start_session(stage)
+                session_started = True
             print('检查目标机出站 HTTPS 与防火墙；仅放通上报目的地址/端口，不开放入站端口…', flush=True)
             check = remote.helper(stage, 'check', url=args.url, firewall_mode='inspect' if args.check_only else 'ensure')
             if abs(check['clock']-time.time()) > 55:
@@ -359,21 +402,23 @@ def install(args, password, *, known_hosts_only=False):
             if network:
                 print(f"出站 {network['host']}:{network['port']}/TCP 已通过 TLS 校验；防火墙={','.join(network['firewalls']) or '未启用受支持的管理器'}；新增规则={network['rules_added']}；安装后还将验证服务账户真实上报。", flush=True)
             server = find_server(db, args.ip, args.port, args.server_id)
-            credential = db.get(AgentCredential, server.id) if server else None
-            healthy = already_healthy(server, credential, check, args.url, hashlib.sha256(ca).hexdigest() if ca else None,bundle_hash)
             db.rollback()
-            if args.check_only or (healthy and not getattr(args, 'reinstall', False)):
-                print('检查完成，未修改节点或凭据。' if args.check_only else 'Agent 版本、节点凭据及配置一致，服务运行正常，跳过重复安装。')
+            if args.check_only:
+                print('检查完成，未修改节点或凭据。')
                 completed = True
-                return {'server_id':server.id if server else None,'status':'checked' if args.check_only else 'already_healthy'}
-            print('安装节点依赖并准备隔离版本（可能需要数分钟）…', flush=True)
-            release = remote.helper(stage, 'prepare')['release']
+                return {'server_id':server.id if server else None,'status':'checked'}
+            print('准备新版并彻底停止旧 Agent、移除旧服务和配置；首次部署也统一覆盖安装…', flush=True)
+            prepared = remote.helper(stage, 'prepare')
+            release = prepared['release']
+            if prepared.get('recovered_previous'):
+                print('已接管上次中断的安装记录；旧进程已确认终止，继续本次覆盖安装。', flush=True)
             if not re.fullmatch(r'/opt/node-monitor-agent/releases/[0-9a-f]{32}', release):
                 raise InstallError('节点返回了无效的 Agent 版本目录')
             # copytree preserves the staging directory's SELinux xattrs. Restore
             # the destination labels before systemd executes the installed files.
             remote.run('if command -v restorecon >/dev/null 2>&1; then restorecon -R -- '+shlex.quote(release)+'; fi', root=True)
             print('签发单节点 Token，部署服务并验证首次 HTTPS 上报…', flush=True)
+            remote.assert_session()
             snapshot, token, digest = provision(db, args.ip, args.port, args.user, check['hostname'], args.server_id,
                                                require_agent=getattr(args, 'reinstall', False))
             config = {'url':args.url, 'server_id':snapshot['id'], 'token':token, 'interval_seconds':300, 'jitter_seconds':15}
@@ -382,18 +427,23 @@ def install(args, password, *, known_hosts_only=False):
             remote.put(stage, 'config.json', json.dumps(config).encode(), 0o600)
             activated = True
             remote.helper(stage, 'activate', release=release)
-            remote.helper(stage, 'finish', release=release)
+            finished = remote.helper(stage, 'finish', release=release)
             completed = True
+            if finished.get('cleanup_warning'):
+                print('新版上报已通过；部分旧版本文件未能清理，请核对 /opt/node-monitor-agent 下的目录权限。', flush=True)
             print(f"安装成功：节点 ID={snapshot['id']}，服务账户真实 HTTPS 上报已通过，每 300 秒上报，systemd 已启用开机启动。")
             print('SSH 密码未保存，未创建 SSH 密钥或修改 authorized_keys/crontab。')
             return {'server_id':snapshot['id'],'status':'installed'}
-        except BaseException:
-            network_restore_safe = True
+        except BaseException as error:
+            network_restore_safe = not getattr(error, 'recovery_required', False)
+            preserve_stage = not network_restore_safe
             if release and not activated:
                 try:
                     remote.helper(stage, 'rollback', release=release)
                 except Exception:
                     print('安装准备未完成清理，请检查目标安装锁 '+release, file=sys.stderr)
+                    network_restore_safe = False
+                    preserve_stage = True
             if activated:
                 try:
                     remote.helper(stage, 'rollback', release=release)
@@ -407,7 +457,7 @@ def install(args, password, *, known_hosts_only=False):
             if snapshot:
                 restore_credentials(db, snapshot, digest)
                 print('已撤销本次 Token；已有节点的原采集方式及凭据已恢复。', file=sys.stderr)
-            if stage and network_restore_safe:
+            if stage and session_started and network_restore_safe:
                 try:
                     remote.helper(stage, 'network-rollback')
                 except Exception:
@@ -421,7 +471,10 @@ def install(args, password, *, known_hosts_only=False):
                     remote.run('rm -rf -- '+shlex.quote(stage), root=True, timeout=15)
                 except Exception:
                     print('临时文件未能清理，请在目标机删除 '+stage, file=sys.stderr)
-            client.close()
+            try:
+                remote.close_session()
+            finally:
+                client.close()
 
 
 def main():

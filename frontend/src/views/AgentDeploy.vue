@@ -4,7 +4,7 @@
       <div class="panel-caption"><span class="step-number">02</span><div><h2>{{ redeploy ? '重新部署独立 Agent' : '部署独立 Agent' }}</h2><p>每 5 分钟主动上报，无需 SSH 免密密钥。</p></div></div>
       <div class="deployment-summary"><div><span>上报入口</span><code>{{ reportEndpoint }}</code></div><div><span>运行方式</span><strong>独立运行包 · systemd 自动启动</strong></div></div>
       <p class="deployment-note">使用左侧用户名和密码连接当前节点，自动检查 sudo、时钟、磁盘、证书与出站 HTTPS。UFW/firewalld 仅补充到上报地址和端口的出站规则，保留其他规则；必须通过服务账户真实上报验证才算部署完成。</p>
-      <p v-if="redeploy" class="deployment-note">重部署会更新 Agent 程序及上报凭据，保留节点编号、分组和历史；失败时尝试恢复原服务与凭据。只有点击下方按钮才会开始。</p>
+      <p class="deployment-note">首次部署和重部署均覆盖安装：先终止旧 Agent、移除旧服务和配置，再安装新版并验证上报；自动处理上次中断的安装记录。保留节点编号、分组和历史，失败时尝试恢复备份。只有点击下方按钮才会开始；旧进程无法终止时会明确报错。</p>
       <p v-if="!eligible" class="operation-error" role="alert">该节点已不再使用 Agent 采集，请返回节点配置核对；此页面不会切换其采集方式。</p>
       <div class="deploy-actions"><span>{{ redeploy ? '固定当前节点，保留 Agent 采集方式。' : '部署成功后自动切换为 Agent 采集。' }}</span><button class="primary-button" :disabled="access.busy || !eligible || (!redeploy && job?.status === 'success')" @click="deploy">{{ job?.status === 'running' ? '正在部署…' : preparing ? '准备部署…' : job?.status === 'success' ? (redeploy ? '再次重新部署 Agent' : '部署完成') : job?.status === 'failed' ? '重试部署 Agent' : redeploy ? '重新部署 Agent' : '一键部署 Agent' }}</button></div>
       <div v-if="job" class="job-result" :class="job.status" role="status"><div class="job-caption"><strong>{{ job.status === 'running' ? '部署进行中' : job.status === 'success' ? '部署完成' : '需要检查' }}</strong><span>{{ job.message }}</span></div><pre class="deployment-log" aria-label="部署日志">{{ job.logs?.join('\n') || '任务已提交，正在等待检查结果…' }}</pre></div>

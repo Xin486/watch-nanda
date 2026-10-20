@@ -50,6 +50,7 @@ sudo bash start.sh
 初始化不会创建 SSH 免密密钥。节点 Agent 的 HTTPS 入口及内部 CA 接入步骤见 [Agent 接入说明](agent/README.md)。
 监控中心初始化后，可先用 `bash agent/build.sh` 构建含运行时的独立 Agent 包，再运行 `sudo bash install-agent.sh` 输入目标 IP、SSH 用户和密码安装；节点无需 Python/pip，只检查可加 `--check-only`。
 脚本复用已有节点并保留历史，不创建 SSH 免密密钥；192.168.1.* 目标默认用内网 HTTPS，其余默认用 114.212.165.149:59443，详见 Agent 接入说明。
+首次部署与重部署均为覆盖安装：自动接管中断记录，确认旧 Agent 进程完全退出并移除旧服务/配置后才更新 Token，验证新版真实上报后清理旧安装文件。真实并发部署会被互斥锁阻止；旧进程卡在内核中无法终止时明确失败，不自动重启整机或 GPU。`--check-only` 仍只检查。
 `--skip-deps` 可跳过已安装依赖的更新，仍执行数据库校验、迁移和前端构建。
 
 ### 方式二：手动部署

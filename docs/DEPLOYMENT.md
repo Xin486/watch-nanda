@@ -53,7 +53,7 @@ sudo bash start.sh
 
 若依赖、数据库结构和服务配置均未改变，可保留实际运行环境进行小范围发布：先确认生产工作区干净、无运行中的部署任务及等待处理的批量队列（`/api/ops/agent-batches` 需运维登录读取），保存当前提交、静态文件和 Agent 包的受保护备份；只读迁移检查通过后，将源码快进到已推送的提交。
 
-使用锁文件对应的前端构建结果发布，保留旧哈希资源，最后原子替换首页。将经过清单及源码哈希校验、原生自检的 Agent 包和两个摘要侧文件一起替换，再重启 `watch-nanda-backend.service`。不需要改动时保留 Nginx/WAF、systemd 配置和依赖环境，不执行初始化或迁移写入。仅前端和文档变化时，只更新对应源码与静态文件，不必替换未变化的 Agent 包或重启后端。发布后验证 HTTPS、API、SSE、WSS 路由及 Agent 上报；记录可恢复的备份路径。回退时恢复原提交、首页与 Agent 包并重启后端，不回退或覆盖数据库。
+使用锁文件对应的前端构建结果发布，保留旧哈希资源，最后原子替换首页。将经过清单及源码哈希校验、原生自检的 Agent 包和两个摘要侧文件一起替换；常驻后端模块变化时再重启 `watch-nanda-backend.service`。仅修改 `scripts/install_agent.py`、节点安装器/服务模板及匹配包时，在确认没有部署任务或运行队列后一起发布；每个部署由新的 `backend/agent_job.py` 子进程读取安装器与包，不必重启后端。其他无需改动的 Nginx/WAF、systemd 配置和依赖环境保持不动，不执行初始化或迁移写入。仅前端和文档变化时，只更新对应源码与静态文件，不必替换未变化的 Agent 包或重启后端。发布后验证 HTTPS、API、SSE、WSS 路由及 Agent 上报；记录可恢复的备份路径。回退时恢复相互匹配的原提交、首页与 Agent 包，涉及常驻模块时重启后端，不回退或覆盖数据库。
 
 ## 迁移检查
 
@@ -80,4 +80,4 @@ python3 migrate_agent.py --require-ready
 
 服务日志使用 `journalctl -u watch-nanda-backend`。生产版本回退时恢复已确认兼容的源码、依赖、前端和服务/代理配置，保留现有新增数据库结构及历史。不能直接切到不识别 Agent 的老后端，否则可能重新对 Agent 节点进行 SSH 采集。
 
-单节点切换与安装回滚见 [Agent 接入说明](../agent/README.md#试点及回退)。Agent 安装失败使用安装器的恢复流程；不要删除 release、`.rollback` 或 `.install-pending.json` 来强行重试。
+单节点切换与安装回滚见 [Agent 接入说明](../agent/README.md#试点及回退)。Agent 安装失败保留安装器恢复记录；不要手动删除 release、`.rollback` 或 `.install-pending.json`。再次主动部署会在独占会话中接管中断记录，确认旧 Agent 彻底停止后覆盖安装；真实并发任务和无法终止的 D 状态进程仍会明确拒绝。首次部署与重部署统一采用此流程，详见 Agent 说明。

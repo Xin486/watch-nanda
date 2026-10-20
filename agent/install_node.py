@@ -12,8 +12,10 @@ import json
 import os
 from pathlib import Path
 import pwd
+import select
 import shutil
 import shlex
+import signal
 import socket
 import ssl
 import subprocess
@@ -27,6 +29,12 @@ ETC = Path('/etc/node-monitor-agent')
 UNIT = Path('/etc/systemd/system/node-monitor-agent.service')
 PENDING = BASE / '.install-pending.json'
 NAME = 'node-monitor-agent.service'
+PROC = Path('/proc')
+SESSION_LOCK = Path('/run/watch-nanda-agent-session.lock')
+
+
+class RecoveryRequired(RuntimeError):
+    pass
 
 
 def command(args, *, check=True, timeout=900):
@@ -39,7 +47,21 @@ def command(args, *, check=True, timeout=900):
         env['PYINSTALLER_RESET_ENVIRONMENT']='1'
     env['LC_ALL'] = 'C'
     if args[0]=='apt-get': env.update(DEBIAN_FRONTEND='noninteractive',NEEDRESTART_MODE='l')
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,env=env)
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.stdout.close()
+            raise RuntimeError('节点命令超时且进程无法终止；可能处于内核等待，请核对 GPU/驱动和 Agent 残留进程') from None
+        raise RuntimeError('节点命令执行超时，覆盖安装未完成') from None
+    result = subprocess.CompletedProcess(args, process.returncode, output)
     if check and result.returncode:
         # Command output can include pip configuration. Keep errors bounded and generic.
         raise RuntimeError('命令执行失败：'+Path(args[0]).name+'；检查软件源、权限及节点日志')
@@ -58,9 +80,9 @@ def regular(path):
 def check_owned_service():
     result = command(['systemctl','show',NAME,'-p','LoadState','-p','FragmentPath'],check=False).stdout
     values = dict(line.split('=',1) for line in result.splitlines() if '=' in line)
-    if values.get('LoadState') == 'loaded':
-        if values.get('FragmentPath') != str(UNIT):
-            raise RuntimeError('同名服务位于其他位置，不会覆盖')
+    if values.get('LoadState') == 'loaded' and values.get('FragmentPath') != str(UNIT):
+        raise RuntimeError('同名服务位于其他位置，不会覆盖')
+    if UNIT.exists():
         text = UNIT.read_text()
         expected = ('Description=Node Monitor metrics reporting agent', 'User=node-monitor', 'Group=node-monitor')
         starts = [line for line in text.splitlines() if line.startswith('ExecStart=')]
@@ -68,11 +90,11 @@ def check_owned_service():
         valid.append(f'ExecStart={BASE}/current/node-monitor-agent --config {ETC}/config.json')
         if not all(item in text.splitlines() for item in expected) or starts not in [[line] for line in valid]:
             raise RuntimeError('同名服务不是本项目标准 Agent，不会覆盖；请先人工核对')
-        dropins=command(['systemctl','show',NAME,'-p','DropInPaths']).stdout.strip()
+        dropins=command(['systemctl','show',NAME,'-p','DropInPaths'],check=False).stdout.strip()
         if dropins.partition('=')[2].strip():
             raise RuntimeError('Agent 服务有自定义 drop-in，请先人工核对，避免覆盖定制配置')
-    elif UNIT.exists():
-        raise RuntimeError('已有未加载的同名服务文件，请先人工核对')
+    elif values.get('LoadState') == 'loaded':
+        raise RuntimeError('同名服务文件无法核对，未覆盖')
     for path in (UNIT, ETC/'config.json', ETC/'ca.crt'):
         regular(path)
     for path in (BASE, ETC, BASE/'releases'):
@@ -84,7 +106,7 @@ def check_owned_service():
     if current.exists() or current.is_symlink():
         if not current.is_symlink() or current.resolve().parent != (BASE/'releases').resolve():
             raise RuntimeError('current 不是本项目版本链接，不会覆盖')
-    return values.get('LoadState') == 'loaded'
+    return UNIT.exists()
 
 
 def firewall_state():
@@ -240,29 +262,8 @@ def check(stage, url, configure_firewall=False):
         result['venv_available'] = True
     except ImportError:
         pass
-    config = ETC/'config.json'
-    if config.exists():
-        mode = config.stat()
-        result['config_safe'] = bool(result['account_safe'] and mode.st_uid == 0 and mode.st_gid == group.gr_gid
-                                     and not mode.st_mode & 0o027)
-        data = json.loads(config.read_text())
-        result.update(server_id=data.get('server_id'),url=data.get('url'),interval_seconds=data.get('interval_seconds',300),
-                      token_hash=hashlib.sha256(str(data.get('token','')).encode()).hexdigest())
-        ca = Path(data['ca_file']) if data.get('ca_file') else None
-        result['ca_hash'] = hashlib.sha256(ca.read_bytes()).hexdigest() if ca else None
-    program = BASE/'current'/'monitor_agent.py' if (BASE/'current').is_symlink() else BASE/'monitor_agent.py'
-    if program.exists():
-        result['program_hash'] = hashlib.sha256(program.read_bytes()).hexdigest()
-    manifest=BASE/'current'/'manifest.json'
-    if manifest.is_file():
-        details=json.loads(manifest.read_text())
-        for name,digest in details['files'].items():
-            path=manifest.parent/name
-            if not path.is_file() or path.is_symlink() or path.stat().st_uid!=0 or path.stat().st_mode & 0o022 or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
-                raise RuntimeError('已安装独立包文件校验失败：'+name)
-        result['program_hash']=details['source_sha256']
-        result['runtime_kind']='standalone'
-        result['bundle_sha256']=(BASE/'current'/'bundle.sha256').read_text().strip()
+    # Overwrite installs must also repair a corrupt old config/runtime, without reading its token.
+    result['old_install_present'] = UNIT.exists() or (ETC/'config.json').exists() or (BASE/'current').is_symlink()
     return result
 
 
@@ -317,13 +318,153 @@ def pending(release):
         raise RuntimeError('安装锁已改变，不会覆盖其他安装操作')
 
 
+def session_file():
+    regular(SESSION_LOCK)
+    fd = os.open(SESSION_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    stream = os.fdopen(fd, 'r+')
+    if os.fstat(fd).st_uid != 0 or os.fstat(fd).st_mode & 0o077:
+        stream.close()
+        raise RuntimeError('部署会话锁权限不正确')
+    return stream
+
+
+def deployment_session(stage):
+    """Keep a node-wide lease across SSH helper calls; EOF/heartbeat expiry releases it."""
+    with session_file() as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('目标机已有正在执行的 Agent 部署，请等待该任务结束') from None
+        stream.seek(0); stream.truncate()
+        json.dump({'stage': str(stage)}, stream); stream.flush()
+        print(json.dumps({'ok': True, 'session': True}), flush=True)
+        try:
+            # Use unbuffered reads: a buffered reader can hide already-buffered heartbeats from select.
+            while select.select([sys.stdin], [], [], 45)[0]:
+                if not os.read(sys.stdin.fileno(), 256):
+                    break
+        finally:
+            stream.seek(0); stream.truncate(); stream.write('{}'); stream.flush()
+
+
+def require_session(stage):
+    with session_file() as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if json.load(stream).get('stage') == str(stage):
+                return
+        raise RuntimeError('部署会话已失效，未继续改动节点；请重新发起覆盖安装')
+
+
+def agent_processes():
+    """Match our service cgroup or installed runtime, never unrelated Python/GPU tasks."""
+    result = []
+    for entry in PROC.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            raw = (entry/'stat').read_text().rsplit(')', 1)[1].split()
+            if raw[0] == 'Z':
+                continue
+            argv = (entry/'cmdline').read_bytes().decode(errors='replace').split('\0')
+            if '--installer' in argv:
+                continue
+            cgroups = (entry/'cgroup').read_text().splitlines()
+            owned = any(line.split(':', 2)[-1].endswith('/'+NAME) for line in cgroups)
+            if not owned and '--config' in argv:
+                executable = Path(argv[0]).resolve()
+                owned = (executable == BASE/'current'/'node-monitor-agent'
+                         or (executable.name == 'node-monitor-agent' and executable.parent.parent == BASE/'releases')
+                         or any(value in (str(BASE/'monitor_agent.py'), str(BASE/'current'/'monitor_agent.py'))
+                                or (Path(value).name == 'monitor_agent.py' and Path(value).parent.parent == BASE/'releases')
+                                for value in argv[1:] if value.startswith(str(BASE)+'/')))
+                index = argv.index('--config')
+                owned = owned and len(argv) > index+1 and argv[index+1] == str(ETC/'config.json')
+            if owned:
+                result.append({'pid': int(entry.name), 'state': raw[0], 'started': raw[19]})
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (OSError, ValueError, IndexError):
+            raise RuntimeError('无法核对 Agent 进程，未确认终止旧服务') from None
+    return result
+
+
+def signal_agents(sig):
+    for process in agent_processes():
+        try:
+            # Check again to avoid signalling a reused PID.
+            raw = (PROC/str(process['pid'])/'stat').read_text().rsplit(')', 1)[1].split()
+            if raw[19] == process['started']:
+                os.kill(process['pid'], sig)
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+
+
+def stop_agent(exists=True):
+    if exists:
+        # Suppress Restart=on-failure before sending signals; don't wait systemd's old 90s cycles.
+        command(['systemctl', 'stop', '--no-block', NAME], check=False, timeout=15)
+    signal_agents(signal.SIGTERM)
+    for sig, seconds in ((None, 8), (signal.SIGKILL, 5)):
+        if sig is not None:
+            signal_agents(sig)
+        deadline = time.monotonic() + seconds
+        for _ in range(seconds*5):
+            if not agent_processes():
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(.2)
+    remaining = agent_processes()
+    if remaining:
+        summary = ', '.join(f"{p['pid']}({p['state']})" for p in remaining[:8])
+        raise RuntimeError('旧 Agent 进程无法终止：'+summary+'；D 表示内核不可中断等待，需恢复 GPU/驱动或节点后重试；未继续覆盖，部署未完成')
+    if exists:
+        for _ in range(25):
+            state = command(['systemctl', 'show', NAME, '-p', 'ActiveState', '--value'], check=False, timeout=10).stdout.strip()
+            if state not in ('active', 'activating', 'deactivating', 'reloading'):
+                return
+            time.sleep(.2)
+        raise RuntimeError('旧 Agent 服务尚未完成停止，未继续覆盖；请稍后重试')
+
+
+def backup_state(release, stage):
+    backup = release/'.rollback'
+    if (backup/'state.json').exists():
+        return backup
+    backup.mkdir(mode=0o700, exist_ok=True)
+    metadata = {'active': active(), 'enabled': command(['systemctl','is-enabled','--quiet',NAME], check=False).returncode == 0,
+                'files': [], 'current': os.readlink(BASE/'current') if (BASE/'current').is_symlink() else None}
+    for source, name in ((ETC/'config.json','config.json'), (ETC/'ca.crt','ca.crt'), (UNIT,'service')):
+        if source.exists():
+            write_file(backup/name, source.read_bytes())
+            metadata['files'].append(name)
+    if (stage/'network-changes.json').exists():
+        write_file(backup/'network-changes.json', (stage/'network-changes.json').read_bytes())
+    write_file(backup/'state.json', json.dumps(metadata).encode())
+    return backup
+
+
+def archive_pending():
+    regular(PENDING)
+    if not PENDING.exists():
+        return False
+    # The live session lock, not a leftover JSON file, determines whether a deployment is running.
+    history = BASE/'.install-history'
+    if history.is_symlink():
+        raise RuntimeError('安装记录目录不是普通目录')
+    history.mkdir(mode=0o700, exist_ok=True); history.chmod(0o700)
+    write_file(history/(uuid4().hex+'.json'), PENDING.read_bytes())
+    PENDING.unlink()
+    return True
+
+
 def prepare(stage):
     check_owned_service()
     BASE.mkdir(mode=0o755,exist_ok=True)
     BASE.chmod(0o755)
-    regular(PENDING)
-    if PENDING.exists():
-        raise RuntimeError('已有 Agent 安装未结束；请先恢复该次安装，避免并发改动凭据')
+    recovered = archive_pending()
     release = BASE/'releases'/uuid4().hex
     release.parent.mkdir(mode=0o755,exist_ok=True)
     release.parent.chmod(0o755)
@@ -347,46 +488,60 @@ def prepare(stage):
                     path.chmod(0o755 if path.is_dir() or path.name=='node-monitor-agent' else 0o644)
             write_file(release/'bundle.sha256',(stage/'bundle.sha256').read_bytes(),0o644)
             command([str(release/'node-monitor-agent'),'--self-test'])
-            return {'release':str(release),'runtime':'standalone'}
-        try:
-            import ensurepip
-        except ImportError:
-            if shutil.which('apt-get'):
-                command(['apt-get','update'])
-                command(['apt-get','install','-y','python3-venv','ca-certificates'])
-            elif shutil.which('dnf'):
-                command(['dnf','install','-y','python3-pip','ca-certificates'])
-            else:
-                raise RuntimeError('节点缺少 venv/ensurepip，请先安装对应版本的 python3-venv')
-        account()
-        command([sys.executable,'-m','venv',str(release/'venv')])
-        command([str(release/'venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(stage/'requirements.txt')])
-        write_file(release/'monitor_agent.py',(stage/'monitor_agent.py').read_bytes(),0o644)
-        command([str(release/'venv/bin/python'),'-c','import pynvml;compile(open(__import__("sys").argv[1]).read(),"agent","exec")',str(release/'monitor_agent.py')])
-        return {'release':str(release)}
-    except BaseException:
-        PENDING.unlink(missing_ok=True)
+            runtime = 'standalone'
+        else:
+            prepare_source(stage, release)
+            runtime = 'source'
+        backup_state(release, stage)
+        exists = check_owned_service()
+        stop_agent(exists)
+        # Old runtime stays available only for rollback until the new one has reported successfully.
+        write_file(release/'.rollback'/'teardown-started', b'1')
+        if exists:
+            command(['systemctl','disable',NAME])
+        for target in (UNIT, ETC/'config.json', ETC/'ca.crt'):
+            regular(target); target.unlink(missing_ok=True)
+        current = BASE/'current'
+        if current.is_symlink():
+            current.unlink()
+        command(['systemctl','daemon-reload'])
+        command(['systemctl','reset-failed',NAME], check=False)
+        return {'release':str(release),'runtime':runtime,'recovered_previous':recovered,'old_agent_stopped':True}
+    except BaseException as error:
+        if (release/'.rollback'/'teardown-started').exists():
+            try:
+                rollback(release)
+            except BaseException:
+                raise RecoveryRequired('覆盖准备失败，恢复尚未确认；保留安装备份，请再次发起覆盖安装前核对节点') from None
+        else:
+            PENDING.unlink(missing_ok=True)
         raise
+
+
+def prepare_source(stage, release):
+    try:
+        import ensurepip
+    except ImportError:
+        if shutil.which('apt-get'):
+            command(['apt-get','update'])
+            command(['apt-get','install','-y','python3-venv','ca-certificates'])
+        elif shutil.which('dnf'):
+            command(['dnf','install','-y','python3-pip','ca-certificates'])
+        else:
+            raise RuntimeError('节点缺少 venv/ensurepip，请先安装对应版本的 python3-venv')
+    account()
+    command([sys.executable,'-m','venv',str(release/'venv')])
+    command([str(release/'venv/bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(stage/'requirements.txt')])
+    write_file(release/'monitor_agent.py',(stage/'monitor_agent.py').read_bytes(),0o644)
+    command([str(release/'venv/bin/python'),'-c','import pynvml;compile(open(__import__("sys").argv[1]).read(),"agent","exec")',str(release/'monitor_agent.py')])
 
 
 def activate(stage, release):
     pending(release)
     exists = check_owned_service()
     group_id = account()
-    backup = release/'.rollback'
-    backup.mkdir(mode=0o700)
-    files = [(ETC/'config.json','config.json'),(ETC/'ca.crt','ca.crt'),(UNIT,'service')]
-    metadata = {'active':active(), 'enabled':command(['systemctl','is-enabled','--quiet',NAME],check=False).returncode==0,
-                'files':[], 'current':os.readlink(BASE/'current') if (BASE/'current').is_symlink() else None}
-    for source, name in files:
-        if source.exists():
-            write_file(backup/name,source.read_bytes())
-            metadata['files'].append(name)
-    write_file(backup/'state.json',json.dumps(metadata).encode())
-    if (stage/'network-changes.json').exists():
-        write_file(backup/'network-changes.json',(stage/'network-changes.json').read_bytes())
-    if exists:
-        command(['systemctl','stop',NAME])
+    backup_state(release, stage)
+    stop_agent(exists)
     ETC.mkdir(mode=0o750,exist_ok=True)
     os.chown(ETC,0,group_id)
     ETC.chmod(0o750)
@@ -438,7 +593,7 @@ def rollback(release):
         PENDING.unlink()
         return {}
     metadata = json.loads((backup/'state.json').read_text())
-    command(['systemctl','stop',NAME],check=active())
+    stop_agent(UNIT.exists())
     gid = grp.getgrnam('node-monitor').gr_gid
     for target, name, mode in [(ETC/'config.json','config.json',0o640),(ETC/'ca.crt','ca.crt',0o644),(UNIT,'service',0o644)]:
         if name in metadata['files']:
@@ -468,6 +623,38 @@ def rollback(release):
     return {}
 
 
+def finish(release):
+    pending(release)
+    if (BASE/'current').resolve() != release.resolve() or not active():
+        raise RuntimeError('新版 Agent 尚未激活，不能提交覆盖安装')
+    PENDING.unlink()
+    warnings = []
+    for path in (BASE/'releases').iterdir():
+        if path == release:
+            continue
+        try:
+            release_path(str(path))
+            if path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
+                raise RuntimeError('旧版本目录归属不正确')
+            shutil.rmtree(path)
+        except (OSError, RuntimeError):
+            warnings.append(path.name)
+    for name in ('monitor_agent.py', 'requirements.txt', 'venv'):
+        path = BASE/name
+        try:
+            if path.is_symlink():
+                raise RuntimeError('旧安装路径是符号链接')
+            if path.is_dir():
+                if path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
+                    raise RuntimeError('旧安装目录归属不正确')
+                shutil.rmtree(path)
+            else:
+                regular(path); path.unlink(missing_ok=True)
+        except (OSError, RuntimeError):
+            warnings.append(name)
+    return {'cleanup_warning': bool(warnings)}
+
+
 @contextmanager
 def operation_lock():
     # /run is root-controlled and shared by all temporary installer uploads.
@@ -475,13 +662,16 @@ def operation_lock():
     regular(path)
     fd = os.open(path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
     with os.fdopen(fd,'w') as stream:
-        fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        try:
+            fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('目标机上一安装步骤仍在执行，请等待其结束后重试') from None
         yield
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('action',choices=['check','prepare','activate','rollback','finish','network-rollback'])
+    parser.add_argument('action',choices=['session','check','prepare','activate','rollback','finish','network-rollback'])
     parser.add_argument('--stage',type=Path,required=True)
     parser.add_argument('--url')
     parser.add_argument('--release')
@@ -493,7 +683,12 @@ def main(argv=None):
     stage = args.stage
     if stage.parent != Path('/tmp') or not stage.name.startswith('watch-nanda-agent.') or stage.is_symlink() or stage.stat().st_mode & 0o077:
         raise RuntimeError('临时目录权限或路径不正确')
+    if args.action == 'session':
+        deployment_session(stage)
+        return {}
     with operation_lock():
+        if args.action != 'check' or args.firewall_mode == 'ensure':
+            require_session(stage)
         if args.action == 'check':
             return check(stage,args.url,args.firewall_mode == 'ensure')
         if args.action == 'network-rollback':
@@ -505,9 +700,7 @@ def main(argv=None):
             return activate(stage,release)
         if args.action == 'rollback':
             return rollback(release)
-        pending(release)
-        PENDING.unlink()
-        return {}
+        return finish(release)
 
 
 def entrypoint(argv=None):
@@ -515,7 +708,7 @@ def entrypoint(argv=None):
         print(json.dumps({'ok':True,**main(argv)}))
     except Exception as error:
         message = str(error) if isinstance(error,RuntimeError) else type(error).__name__
-        print(json.dumps({'ok':False,'error':message}))
+        print(json.dumps({'ok':False,'error':message,'recovery_required':isinstance(error,RecoveryRequired)}))
 
 
 if __name__ == '__main__':
