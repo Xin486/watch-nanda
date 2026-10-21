@@ -96,6 +96,35 @@ onUnmounted(() => clearInterval(timer))
 .page-description{font-size:13px}.summary-label{font-size:13px}.summary-note{font-size:11px;color:var(--text-muted)}.summary-card{padding-top:14px;padding-bottom:14px}.metric-label{font-size:11px}.metric-note{font-size:10px;color:var(--text-muted)}.gpu-summary>span{font-size:11px}.gpu-summary small{font-size:10px}.process-label{font-size:10px;color:var(--text-muted)}.process-summary p{font-size:11px;min-height:37px}.card-footer{font-size:11px;color:var(--text-muted)}
 .heading-actions{gap:12px}.screen-link{min-height:40px}.detail-link{color:var(--accent)}
 @media(min-width:1600px){.server-grid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}}
+/* Use the available main-column width on large displays instead of a 1920px island. */
+@media(min-width:2200px){
+  .dashboard-container{max-width:none;width:100%;padding:36px 40px 48px}
+  .server-grid{grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:22px}
+  .summary-grid{gap:18px;margin-bottom:32px}
+  .summary-card{padding:18px 22px}.summary-card strong{font-size:34px}
+  .page-heading h1{font-size:30px}.list-heading h2{font-size:17px}
+  .node-name-line h3{font-size:17px}.metric strong{font-size:28px}
+  .metric-label,.card-footer{font-size:12px}.metric-note{font-size:11px}
+  .node-address,.gpu-summary>span,.process-summary p{font-size:12px}
+  .status-badge,.card-meta,.gpu-summary small,.process-label{font-size:11px}
+}
+@media(min-width:3000px){
+  .dashboard-container{padding:44px 56px 60px}
+  .page-heading{margin-bottom:32px}.page-heading h1{font-size:34px}
+  .page-description,.clock{font-size:14px}.heading-actions{gap:18px}
+  .summary-grid{gap:22px;margin-bottom:38px}.summary-label{font-size:15px}
+  .summary-note{font-size:12px}.summary-card{padding:22px 26px}.summary-card strong{font-size:38px}
+  .list-toolbar{margin-bottom:24px}.list-heading h2{font-size:19px}
+  .result-count,.sort-box,.sort-box select,.screen-link{font-size:13px}
+  .search-box{width:320px;height:44px}.search-box input{font-size:14px}.sort-box select{height:44px}
+  .server-grid{grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:24px}
+  .card-header{padding:24px 24px 0}.node-name-line h3{font-size:18px}
+  .card-meta{padding:14px 24px 0}.metrics-grid{gap:16px;margin:24px 24px 22px}
+  .metric-label{font-size:12px}.metric strong{font-size:30px}.metric strong small{font-size:12px}
+  .node-context{margin:0 24px 20px;padding:12px 14px}.process-summary p{min-height:41px}
+  .card-footer{padding:14px 24px}.unavailable-body{min-height:277px}
+  .unavailable-body strong{font-size:15px}.unavailable-body p{font-size:13px;max-width:300px}
+}
 @media(max-width:1100px){.dashboard-container{padding:24px}.summary-grid{gap:10px}.summary-card{padding:15px 13px}.summary-note{font-size:9px}.clock{display:none}.list-toolbar{flex-wrap:wrap}.list-actions{flex:1;justify-content:flex-end}.search-box{width:230px}}
 @media(max-width:800px){.summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.summary-card{padding:13px}.summary-card strong{font-size:25px;margin:6px 0 3px}.summary-note{display:none}.page-heading{align-items:flex-start}.page-heading h1{font-size:23px}.heading-actions{gap:8px}.screen-link{padding:9px 11px}.list-actions{flex-basis:100%;justify-content:flex-start}.search-box{flex:1;width:auto}.sort-box>span{display:none}}
 @media(max-width:480px){.dashboard-container{padding:20px 16px 30px}.page-heading{gap:12px;flex-wrap:wrap;margin-bottom:20px}.page-description{font-size:11px}.heading-actions{width:100%}.screen-link{font-size:11px}.clock{display:flex;font-size:11px;order:2;margin-left:auto}.summary-grid{gap:8px;margin-bottom:22px}.summary-card{padding:12px}.summary-label{font-size:10px;gap:6px}.summary-card strong{font-size:24px}.list-actions{gap:8px}.sort-box select{font-size:11px;padding-left:8px;max-width:126px}.search-box{padding:0 9px;gap:6px}.search-box input{font-size:11px}.card-header{padding:17px 16px 0}.card-meta{padding:10px 16px 0}.metrics-grid{gap:10px;margin:18px 16px 16px}.metric strong{font-size:22px}.node-context{margin:0 16px 14px}.card-footer{padding:11px 16px}.node-name-line{gap:7px}.node-name-line h3{font-size:14px}}
