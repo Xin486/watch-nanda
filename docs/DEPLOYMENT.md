@@ -55,6 +55,16 @@ sudo bash start.sh
 
 使用锁文件对应的前端构建结果发布，保留旧哈希资源，最后原子替换首页。将经过清单及源码哈希校验、原生自检的 Agent 包和两个摘要侧文件一起替换；常驻后端模块变化时再重启 `watch-nanda-backend.service`。仅修改 `scripts/install_agent.py`、节点安装器/服务模板及匹配包时，在确认没有部署任务或运行队列后一起发布；每个部署由新的 `backend/agent_job.py` 子进程读取安装器与包，不必重启后端。其他无需改动的 Nginx/WAF、systemd 配置和依赖环境保持不动，不执行初始化或迁移写入。仅前端和文档变化时，只更新对应源码与静态文件，不必替换未变化的 Agent 包或重启后端。发布后验证 HTTPS、API、SSE、WSS 路由及 Agent 上报；记录可恢复的备份路径。回退时恢复相互匹配的原提交、首页与 Agent 包，涉及常驻模块时重启后端，不回退或覆盖数据库。
 
+## 关机后的启动恢复
+
+2026-10-21 现场恢复核对：MySQL 运行在 Docker 容器 `mysql`，原数据目录为 `/data2/mysqldata`，挂载到容器 `/var/lib/mysql`；后端通过 `127.0.0.1:3306` 连接 `monitor_db`。容器重启策略为 `unless-stopped`。旧 `mysql_nfs_backup` 挂载 `/mnt/nfs_share/zulingdatabase`，也曾配置宿主 3306，已停止并改为 `restart=no`，保留数据供核对。不要同时启动这两个容器使用相同宿主端口。
+
+主机开机后，先核对 Docker、Nginx、后端服务状态及容器的实际挂载、重启策略和端口归属。若页面可开而 API 返回 502，查看后端启动日志；本次曾因旧备份容器抢占端口，导致后端连到没有 `monitor_db` 的库。不能因此导入新库结构、清空数据或修改生产凭据。
+
+确认现场仍与上述快照一致时，先保存两容器状态、挂载、重启策略和日志，再停止反复启动失败的后端，关闭旧备份容器自启并正常停止它，启动原 `mysql`。端口冲突失败后，Docker 可能留下 `HostConfig.NetworkMode=bridge`、但 `NetworkSettings.Networks={}` 的状态：MySQL 进程虽运行，宿主 3306 仍不可达。仅在确认原网络确为默认 `bridge` 且连接已丢失时，用 `docker network connect bridge mysql` 恢复原连接，并核对原端口映射；不要重建容器或替换数据目录。
+
+使用实际后端环境只读验证 `monitor_db`、原节点和历史表，运行 `migrate_agent.py --require-ready`。验证通过后，在项目目录执行 `bash start.sh` 恢复已有服务，再检查 HTTPS 页面、API、SSE 和 Agent 上报。既有源码和静态资源完整时直接恢复运行；需要重新发布时按前述小范围发布流程操作。恢复记录放在受保护的运维目录；不要仅为复现而再次重启整机。
+
 ## 迁移检查
 
 使用实际运行后端的 Python 环境，在 `backend/` 中执行：

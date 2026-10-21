@@ -110,6 +110,7 @@ watch-nanda/
 - `deploy/production/nginx.conf` 是基础配置，不是当前完整 WAF 配置。保留现场 `watch-nanda-managed-root` 归属标记、WAF 代理、访问策略、SSE 无缓冲和 WebSocket Upgrade；不得直接用基础模板覆盖现场。
 - 雷池控制台代理为 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` → `https://127.0.0.1:19443`；证书与 CA 在 `/etc/node-monitor/tls/`。
 - MySQL 库为 `monitor_db`。已有库使用 `migrate_agent.py` 增量迁移，不重新导入 `monitor_db.sql`，不重建历史表，不删除数据卷，保留节点 ID 和历史记录。
+- 2026-10-21 开机恢复核对：生产 MySQL 为 Docker 容器 `mysql`，数据 `/data2/mysqldata` 挂载到 `/var/lib/mysql`，后端连接 `127.0.0.1:3306`。旧容器 `mysql_nfs_backup` 使用另一份数据且也配置宿主 3306，已停止并设为 `restart=no`；保留其数据，不能与生产库同时启动争抢端口。开机后先核对端口归属、原挂载、容器网络及 `monitor_db` 可读，再启动后端；`Unknown database` 不能直接当成需要新建库。恢复步骤见 `docs/DEPLOYMENT.md`。
 - SSH 只用密码与严格主机指纹验证，禁用私钥和 ssh-agent 回退。密码使用 Fernet；默认密钥 `/etc/node-monitor/ssh-credentials.key`。运维口令为独立 PBKDF2 摘要，默认 `/etc/node-monitor/ops-password.json`，不跟随系统密码变化。常用 SSH 凭据文件默认 `/etc/node-monitor/ssh-profiles.json`，可用 `SSH_PROFILES_FILE` 覆盖，权限 600、归属服务用户，须与独立加密密钥一起受保护备份。
 - Agent 数据库只存 Token 摘要；节点配置含真实 Token，不入库、不输出到聊天。Agent 只上报指标，无远程命令或自动更新通道；网页部署优先要求独立运行包，不能因缺包静默改用系统 Python 安装。
 - 生产操作按用户授权范围执行。项目理解、检查和文档维护本身不意味着部署、重启、运行迁移、轮换凭据或批量改节点；实际发布前核对现场差异与恢复办法。
