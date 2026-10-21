@@ -22,12 +22,12 @@
         <section class="add-node-connection">
           <div class="add-node-field"><label for="add-mode">采集方式</label><select id="add-mode" v-model="form.collection_mode" :disabled="saving"><option value="agent">节点主动上报（推荐，每5分钟）</option><option value="ssh">SSH 采集（兼容已有节点）</option></select></div>
         </section>
-        <section v-if="form.collection_mode === 'ssh'" class="add-node-connection" aria-labelledby="node-ssh-heading">
-          <div class="add-node-section-heading"><h3 id="node-ssh-heading">SSH 连接</h3><span>用于采集监控数据</span></div>
+        <section class="add-node-connection" aria-labelledby="node-ssh-heading">
+          <div class="add-node-section-heading"><h3 id="node-ssh-heading">SSH 连接</h3><span>{{ form.collection_mode === 'agent' ? '用于安装 Agent 和远程运维' : '用于采集监控数据' }}</span></div>
           <div class="add-node-grid add-node-ssh-grid">
             <div class="add-node-field"><label for="add-ssh-user">用户名</label><input id="add-ssh-user" v-model="form.ssh_user" required maxlength="50" spellcheck="false" autocomplete="off" :disabled="saving"></div>
-            <div class="add-node-field"><label for="add-ssh-port">端口</label><input id="add-ssh-port" v-model.number="form.ssh_port" type="number" min="1" max="65535" step="1" required :disabled="saving"></div>
-            <div class="add-node-field add-node-full"><label for="add-ssh-password">SSH 密码</label><input id="add-ssh-password" v-model="form.ssh_password" type="password" autocomplete="new-password" required :disabled="saving"><small>通过 HTTPS 提交，加密保存；不使用免密私钥。</small></div>
+            <div class="add-node-field"><label for="add-ssh-port">SSH 端口</label><input id="add-ssh-port" v-model.number="form.ssh_port" type="number" min="1" max="65535" step="1" required :disabled="saving"><small>默认 22，可填写实际连接端口</small></div>
+            <div v-if="form.collection_mode === 'ssh'" class="add-node-field add-node-full"><label for="add-ssh-password">SSH 密码</label><input id="add-ssh-password" v-model="form.ssh_password" type="password" autocomplete="new-password" required :disabled="saving"><small>通过 HTTPS 提交，加密保存；不使用免密私钥。</small></div>
           </div>
         </section>
 
@@ -80,11 +80,11 @@ const submit = async () => {
     collection_mode: form.value.collection_mode,
     ...(form.value.collection_mode === 'ssh' ? { ssh_password: form.value.ssh_password } : {}),
   }
-  if (!payload.hostname || !payload.ip_address || (payload.collection_mode === 'ssh' && !payload.ssh_user)) {
+  if (!payload.hostname || !payload.ip_address || !payload.ssh_user) {
     errorMessage.value = '请填写主机名、IP 地址和 SSH 用户名。'
     return
   }
-  if (payload.collection_mode === 'ssh' && (!Number.isInteger(payload.ssh_port) || payload.ssh_port < 1 || payload.ssh_port > 65535)) {
+  if (!Number.isInteger(payload.ssh_port) || payload.ssh_port < 1 || payload.ssh_port > 65535) {
     errorMessage.value = 'SSH 端口应为 1–65535 之间的整数。'
     return
   }
