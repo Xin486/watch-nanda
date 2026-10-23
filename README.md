@@ -3,6 +3,8 @@
 支持节点主动通过 HTTPS 上报，无需 SSH 免密密钥。新节点默认每 5 分钟上报、每 10 分钟保存历史；已有节点继续 SSH 采集，可逐台迁移。
 已有库通过初始化脚本增量升级。生产升级见 [部署说明](docs/DEPLOYMENT.md)，节点接入、Token 签发和回退见 [Agent 接入说明](agent/README.md)。
 
+GitHub 默认分支及项目主线为 `feat/sse-realtime-push`，沿用该分支名称。
+
 通过节点 HTTPS 主动上报或已有 SSH 采集获取 CPU / 内存 / GPU 数据，
 提供控制台卡片、算力大屏、历史曲线与离线邮件告警。
 

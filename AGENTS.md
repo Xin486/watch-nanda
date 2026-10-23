@@ -7,7 +7,7 @@
 - 这是南大服务器监控平台：监控 CPU、内存、NVIDIA GPU、功耗和进程，提供节点控制台、算力大屏、历史曲线、邮件提醒及网页 SSH 运维。
 - 技术栈为 Vue 3 / Vite / ECharts / xterm.js，FastAPI / SQLAlchemy / APScheduler / Paramiko，以及 MySQL。当前没有 Redis 或 Celery；`backend/worker/` 是进程内线程池和调度器。
 - 本地开发环境可以是 Windows，生产和 Agent 运行环境是 Linux/systemd。Python 支持范围按初始化脚本为 3.10–3.12，Node.js 为 18+。
-- 开始修改前检查 `git status --short`、当前分支、近期 `git log` 和相关 `git diff`。2026-10-19 核对的开发/生产分支是 `feat/sse-realtime-push`，不要据此永久假定分支和提交不变。
+- GitHub 默认分支为 `feat/sse-realtime-push`，保留该名称作为项目主线。开始修改前检查 `git status --short`、当前分支、近期 `git log` 和相关 `git diff`；以远端实际设置及现场 Git 状态为准，不把历史生产快照当成当前提交。
 - 保留用户已有修改和有价值的分析、审计产物。最终报告统一放在 `outputs/reports/`，截图和运维审计保留在 `outputs/`，不加入业务提交。用户要求清理时，可删除已确认无运行/验证用途的临时输入、一次性脚本和缓存；不能仅因未跟踪就删除最终报告或审计记录。
 
 ## 项目结构与职责
