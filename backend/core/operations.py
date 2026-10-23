@@ -236,12 +236,21 @@ def trust_host(server_id: int, data: Trust):
     sock = socket.create_connection((host, port), timeout=8)
     try:
         transport = paramiko.Transport(sock)
+        lookup = host if port == 22 else f'[{host}]:{port}'
+        path = (Path.home()/'.ssh'/'known_hosts').resolve()
+        known = paramiko.HostKeys(str(path)) if path.exists() else paramiko.HostKeys()
+        existing = known.lookup(lookup)
+        if existing:
+            # Match SSHClient's preference for the saved key type. A server may
+            # advertise several valid keys, each with a different fingerprint.
+            preferred = next(iter(existing))
+            options = transport.get_security_options()
+            if preferred in options.key_types:
+                options.key_types = (preferred,) + tuple(name for name in options.key_types if name != preferred)
         transport.start_client(timeout=10)
         key = transport.get_remote_server_key()
         if fingerprint(key) != data.fingerprint:
             raise HTTPException(409, '指纹再次变化，未保存信任')
-        lookup = host if port == 22 else f'[{host}]:{port}'
-        path = (Path.home()/'.ssh'/'known_hosts').resolve()
         path.parent.mkdir(mode=0o700, exist_ok=True)
         with guard, SessionLocal() as db:
             if server_id in active_jobs:

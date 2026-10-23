@@ -38,6 +38,7 @@ class OperationsTests(unittest.TestCase):
                   f'[192.0.2.10]:2200 ssh-rsa {other.get_base64()}\n')
         path.write_bytes(original.encode())
         transport=MagicMock();transport.get_remote_server_key.return_value=new
+        transport.get_security_options.return_value.key_types=('ssh-ed25519','ssh-rsa')
         body={'fingerprint':ops.fingerprint(new),'previous_fingerprint':ops.fingerprint(old),
               'expected_host':'192.0.2.10','expected_port':10022}
         return home,path,old,new,other,transport,body
@@ -70,6 +71,7 @@ class OperationsTests(unittest.TestCase):
         backups=list(path.parent.glob('known_hosts.backup-*'))
         self.assertEqual(len(backups),1);self.assertEqual(backups[0].read_bytes(),before)
         transport.auth_password.assert_not_called();transport.close.assert_called_once()
+        self.assertEqual(transport.get_security_options.return_value.key_types,('ssh-rsa','ssh-ed25519'))
         if os.name=='posix':
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
             self.assertEqual(backups[0].stat().st_mode & 0o777,0o600)
