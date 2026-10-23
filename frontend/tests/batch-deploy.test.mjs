@@ -71,21 +71,6 @@ test('unknown fingerprints require a deliberate confirmation before retrying', a
     assert.deepEqual(h.calls.filter(c => ['trust','retry'].includes(c[0])).map(c => c[0]), ['trust','retry'])
   } finally { h.cleanup() }
 })
-test('changed fingerprints pass the old key and target only after confirmation, and changed polling data revokes confirmation', async () => {
-  const trusted=[]
-  const h=harness({trustHost:async(...args)=>trusted.push(args)})
-  try {
-    await flush();await h.start()
-    h.batch.value.items[0]={server_id:1,status:'needs_trust',fingerprint:'SHA256:new',previous_fingerprint:'SHA256:old',host:'192.0.2.10',port:10022}
-    h.inputFor(h.batch.value.items[0]);h.confirmed.value=true
-    h.batch.value.items[0].fingerprint='SHA256:newer'
-    assert.equal(h.confirmed.value,false);await h.submitManual();assert.equal(trusted.length,0)
-    h.confirmed.value=true;await h.submitManual()
-    assert.equal(trusted.length,1);assert.equal(trusted[0][1],'SHA256:newer')
-    assert.deepEqual({...trusted[0][2]},{previous_fingerprint:'SHA256:old',expected_host:'192.0.2.10',expected_port:10022})
-  }finally{h.cleanup()}
-})
-
 test('logout clears manual secrets and ignores a late batch response', async () => {
   let resolve
   const h = harness({ agentBatch: () => new Promise(r => { resolve = r }) })

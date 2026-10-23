@@ -5,7 +5,6 @@ import vm from 'node:vm'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
-const changedKey = { ok:false, code:'host_key_changed', fingerprint:'SHA256:new-key', previous_fingerprint:'SHA256:old-key', host:'192.0.2.7', port:10022 }
 function accessHarness({ protocol = 'https:', action, saved = true, selectable = true, api = {} } = {}) {
   const route = reactive({ params: { id: '7' }, query: action ? { action } : {} })
   const servers = ref([{ id: 7, hostname: 'test-node', ssh_user: 'test', has_ssh_password: saved }])
@@ -29,53 +28,6 @@ function accessHarness({ protocol = 'https:', action, saved = true, selectable =
   const access = scope.run(() => context.create({ selectable }))
   return { access, route, servers, calls, redirects, mount: () => mounts[0](), cleanup: () => { unmounts.forEach(fn => fn()); scope.stop() } }
 }
-
-test('changed host key prompts without saving; explicit confirmation saves both fingerprints and retries SSH', async () => {
-  const trusts=[], checks=[]
-  const h=accessHarness({api:{sshTest:async()=>{checks.push(1);return {data:checks.length===1?changedKey:{ok:true}}},trustHost:async(...args)=>{trusts.push(args)}}})
-  try {
-    await h.mount();await h.access.testConnection()
-    assert.equal(h.access.trustDialogOpen,true);assert.equal(trusts.length,0)
-    await h.access.confirmHostChange()
-    assert.equal(trusts.length,1);assert.equal(trusts[0][0],7);assert.equal(trusts[0][1],changedKey.fingerprint)
-    assert.deepEqual({...trusts[0][2]},{previous_fingerprint:changedKey.previous_fingerprint,expected_host:changedKey.host,expected_port:10022})
-    assert.equal(checks.length,2);assert.equal(h.access.check.ok,true);assert.equal(h.access.trustDialogOpen,false)
-  }finally{h.cleanup()}
-})
-
-test('cancel changed host key leaves trust unchanged, while confirmed terminal errors resume the terminal', async () => {
-  let trusted=0,resumed=0
-  const h=accessHarness({api:{trustHost:async()=>{trusted++}}})
-  try {
-    await h.mount();h.access.connectionResult(changedKey,async()=>{resumed++})
-    h.access.cancelHostTrust();await h.access.confirmHostChange()
-    assert.equal(trusted,0);assert.equal(resumed,0)
-    h.access.connectionResult(changedKey,async()=>{resumed++})
-    await h.access.confirmHostChange()
-    assert.equal(trusted,1);assert.equal(resumed,1);assert.equal(h.calls.length,0)
-  }finally{h.cleanup()}
-})
-
-test('logout or a changed node address invalidates host confirmation and late trust responses cannot reconnect', async () => {
-  const pending=deferred();let resumed=0
-  const h=accessHarness({api:{trustHost:()=>pending.promise}})
-  try {
-    await h.mount();h.access.connectionResult(changedKey,async()=>{resumed++})
-    const trusting=h.access.confirmHostChange();await h.access.logout();pending.resolve({});await trusting
-    assert.equal(resumed,0);assert.equal(h.access.trustDialogOpen,false)
-    h.access.authenticated=true;h.access.connectionResult(changedKey)
-    h.servers.value=[{...h.servers.value[0],ip_address:'192.0.2.20'}];await nextTick()
-    assert.equal(h.access.trustDialogOpen,false);assert.equal(h.access.check,null)
-  }finally{h.cleanup()}
-})
-
-test('a rejected host-key update keeps the confirmation visible and does not reconnect', async () => {
-  const h=accessHarness({api:{trustHost:async()=>{throw {response:{status:409,data:{detail:'指纹再次变化'}}}}}})
-  try {
-    await h.mount();h.access.connectionResult(changedKey);await h.access.confirmHostChange()
-    assert.equal(h.access.error,'指纹再次变化');assert.equal(h.access.trustDialogOpen,true);assert.equal(h.calls.length,0);assert.equal(h.access.busy,false)
-  }finally{h.cleanup()}
-})
 
 test('existing-node SSH action checks saved credentials once without starting a deployment', async () => {
   const h = accessHarness({ action: 'check' })

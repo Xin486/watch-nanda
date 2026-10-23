@@ -11,7 +11,6 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import tempfile
 from threading import Lock, Thread
 import time
 from uuid import uuid4
@@ -51,11 +50,7 @@ class Connection(BaseModel):
 
 
 class Trust(BaseModel):
-    model_config = ConfigDict(extra='forbid')
     fingerprint: str = Field(pattern=r'^SHA256:[A-Za-z0-9+/]{43}$')
-    previous_fingerprint: str | None = Field(default=None, pattern=r'^SHA256:[A-Za-z0-9+/]{43}$')
-    expected_host: str | None = Field(default=None, min_length=1, max_length=255)
-    expected_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class UnknownHost(paramiko.SSHException):
@@ -114,9 +109,7 @@ def safe_error(error):
     if isinstance(error, UnknownHost):
         return {'ok': False, 'code': 'unknown_host', 'message': '首次连接，请核对目标主机指纹后确认信任', 'fingerprint': error.fingerprint}
     if isinstance(error, paramiko.BadHostKeyException):
-        return {'ok': False, 'code': 'host_key_changed',
-                'message': '主机指纹已变化，请核对新旧指纹，确认后可更新并继续连接',
-                'fingerprint': fingerprint(error.key), 'previous_fingerprint': fingerprint(error.expected_key)}
+        return {'ok': False, 'code': 'host_key_changed', 'message': '主机指纹变化，已阻止连接；请由管理员核验'}
     if isinstance(error, paramiko.AuthenticationException):
         return {'ok': False, 'code': 'authentication_failed', 'message': '用户名或密码认证失败；请检查凭据，不会自动尝试其他密码'}
     return {'ok': False, 'code': 'connection_failed', 'message': 'SSH 连接失败：' + type(error).__name__}
@@ -174,7 +167,7 @@ def ssh_test(server_id: int, data: Connection):
     except Exception as error:
         if isinstance(error, HTTPException):
             raise
-        return {**safe_error(error), 'host': config['host'], 'port': config['port']}
+        return safe_error(error)
 
 
 def save_configuration(config):
@@ -223,15 +216,11 @@ def save_configuration(config):
 
 @router.post('/nodes/{server_id}/trust-host', dependencies=[Depends(require_operator)])
 def trust_host(server_id: int, data: Trust):
-    assert_idle(server_id)
     with SessionLocal() as db:
         node = db.get(Server, server_id)
         if not node or not node.is_active:
             raise HTTPException(404, '节点不存在')
         host, port = node.ip_address or node.hostname, node.ssh_port or 22
-    if ((data.expected_host is not None and data.expected_host != host)
-            or (data.expected_port is not None and data.expected_port != port)):
-        raise HTTPException(409, '节点连接地址已变化，请重新检测后核对指纹')
     transport = None
     sock = socket.create_connection((host, port), timeout=8)
     try:
@@ -241,74 +230,24 @@ def trust_host(server_id: int, data: Trust):
         if fingerprint(key) != data.fingerprint:
             raise HTTPException(409, '指纹再次变化，未保存信任')
         lookup = host if port == 22 else f'[{host}]:{port}'
-        path = (Path.home()/'.ssh'/'known_hosts').resolve()
+        path = Path.home()/'.ssh'/'known_hosts'
         path.parent.mkdir(mode=0o700, exist_ok=True)
-        with guard, SessionLocal() as db:
-            if server_id in active_jobs:
-                raise HTTPException(409, '节点正在部署 Agent，请等待任务结束后更新指纹')
-            node = db.query(Server).filter(Server.id == server_id).with_for_update().first()
-            if (not node or not node.is_active
-                    or (node.ip_address or node.hostname, node.ssh_port or 22) != (host, port)):
-                raise HTTPException(409, '节点连接地址已变化，未保存信任')
+        with guard:
             known = paramiko.HostKeys(str(path)) if path.exists() else paramiko.HostKeys()
             existing = known.lookup(lookup)
-            if data.previous_fingerprint:
-                if not existing or data.previous_fingerprint not in {fingerprint(old) for old in existing.values()}:
-                    raise HTTPException(409, '已保存的指纹已变化，请重新检测后确认')
-                replace_known_host(path, lookup, key)
-            elif existing and any(old.asbytes() != key.asbytes() for old in existing.values()):
-                raise HTTPException(409, '已有指纹不匹配，请重新检测并明确确认更换指纹')
-            elif not existing:
-                replace_known_host(path, lookup, key, replacing=False)
+            if existing and any(old.asbytes() != key.asbytes() for old in existing.values()):
+                raise HTTPException(409, '已有主机指纹不匹配，请由管理员核验，不能在此覆盖')
+            # Append rather than rewriting all saved/hashed entries.
+            if not existing:
+                with path.open('a', encoding='utf-8') as stream:
+                    stream.write(f'\n{lookup} {key.get_name()} {key.get_base64()}\n')
+                path.chmod(0o600)
         return {'success': True}
     finally:
         if transport:
             transport.close()
         else:
             sock.close()
-
-
-def replace_known_host(path, lookup, key, *, replacing=True):
-    """Replace only this endpoint; retain comments, aliases and unrelated hashed entries."""
-    original = path.read_bytes().decode('utf-8') if path.exists() else ''
-    lines = []
-    for line in original.splitlines(keepends=True):
-        entry = paramiko.hostkeys.HostKeyEntry.from_line(line.strip()) if line.strip() and not line.lstrip().startswith('#') else None
-        if not entry or entry.key is None:
-            lines.append(line)
-            continue
-        def matches(name):
-            if name == lookup:
-                return True
-            return name.startswith('|1|') and paramiko.HostKeys.hash_host(lookup, name) == name
-        remaining = [name for name in entry.hostnames if not matches(name)]
-        if len(remaining) == len(entry.hostnames):
-            lines.append(line)
-        elif remaining:
-            fields = line.lstrip().split(None, 1)
-            lines.append(','.join(remaining)+' '+fields[1])
-    if replacing:
-        backup = path.with_name('known_hosts.backup-'+uuid4().hex)
-        with backup.open('x', encoding='utf-8', newline='') as stream:
-            os.chmod(backup, 0o600)
-            stream.write(original)
-    content = ''.join(lines)
-    if content and not content.endswith('\n'):
-        content += '\n'
-    content += f'{lookup} {key.get_name()} {key.get_base64()}\n'
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', dir=path.parent,
-                                         prefix='.known_hosts-', delete=False) as stream:
-            temporary = Path(stream.name)
-            os.chmod(temporary, 0o600)
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def append_log(job, line, password):
@@ -451,7 +390,6 @@ async def terminal(websocket: WebSocket, server_id: int):
     await websocket.accept()
     client = channel = None
     saved = {}
-    config = {}
     pending_connect = None
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=15)
@@ -508,8 +446,7 @@ async def terminal(websocket: WebSocket, server_id: int):
     except (Exception, asyncio.CancelledError) as error:
         if not isinstance(error, asyncio.CancelledError):
             try:
-                await websocket.send_json({'type': 'error', **safe_error(error), **saved,
-                                           **({name: config[name] for name in ('host', 'port')} if config else {})})
+                await websocket.send_json({'type': 'error', **safe_error(error), **saved})
             except Exception:
                 pass
     finally:

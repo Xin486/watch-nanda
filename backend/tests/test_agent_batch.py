@@ -167,18 +167,6 @@ class AgentBatchTests(unittest.TestCase):
             with self.Session() as db:db.get(Server,1).collection_mode='ssh';db.commit()
             with patch.object(ops,'connect_ssh') as connect:self.assertEqual(self.run_one(entry)['status'],'failed');connect.assert_not_called()
 
-    def test_changed_host_key_waits_for_explicit_confirmation_without_trying_more_passwords(self):
-        self.agents()
-        with self.client() as client:
-            self.login(client);entry=self.create(client)
-            old,new=MagicMock(),MagicMock();old.asbytes.return_value=b'old-host-key';new.asbytes.return_value=b'new-host-key'
-            choices=lambda:[{'username':'root','password':'ephemeral'},{'username':'other','password':'another'}]
-            with patch.object(ssh_profiles,'candidates',side_effect=choices),patch.object(ops,'connect_ssh',side_effect=paramiko.BadHostKeyException('127.0.0.1',new,old)) as connect:
-                item=self.run_one(entry)
-            self.assertEqual(item['status'],'needs_trust');self.assertEqual(connect.call_count,1)
-            self.assertEqual(item['fingerprint'],ops.fingerprint(new))
-            self.assertEqual(item['previous_fingerprint'],ops.fingerprint(old))
-
     def test_network_failure_does_not_cycle_passwords_and_auth_attempts_are_bounded(self):
         self.agents()
         with self.client() as client:

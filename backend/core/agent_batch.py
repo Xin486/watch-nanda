@@ -142,11 +142,9 @@ def run_item(batch, item, job):
         with lock:
             item.update(status=job['status'], message=job['message'], logs=list(job['logs']))
     except Exception as error:
-        if isinstance(error, (ops.UnknownHost, paramiko.BadHostKeyException)):
-            safe = ops.safe_error(error)
-            result = {**safe, 'status': 'needs_trust', 'previous_fingerprint': safe.get('previous_fingerprint'),
-                      'host': item['_identity'][0], 'port': item['_identity'][1],
-                      'message': '主机指纹已变化，请核对新旧指纹后确认更换；队列已继续处理其他节点' if isinstance(error, paramiko.BadHostKeyException) else '请核对主机指纹并确认信任，队列已继续处理其他节点'}
+        if isinstance(error, ops.UnknownHost):
+            result = {'status': 'needs_trust', 'fingerprint': error.fingerprint,
+                      'message': '请核对主机指纹并确认信任，队列已继续处理其他节点'}
         elif isinstance(error, HTTPException):
             result = {'status': 'failed', 'message': str(error.detail)}
         else:
