@@ -116,6 +116,14 @@ watch-nanda/
 - Agent 数据库只存 Token 摘要；节点配置含真实 Token，不入库、不输出到聊天。Agent 只上报指标，无远程命令或自动更新通道；网页部署优先要求独立运行包，不能因缺包静默改用系统 Python 安装。
 - 生产操作按用户授权范围执行。项目理解、检查和文档维护本身不意味着部署、重启、运行迁移、轮换凭据或批量改节点；实际发布前核对现场差异与恢复办法。
 
+## 苏州实例
+
+- 2026-10-23 核对的苏州主机为 `10.168.100.150`，目录 `/home/test/watch-tower/watch-nanda`，仓库归 root 所有，使用 test 登录后通过 sudo 管理。此实例独立于南京的 `192.168.1.24`，不要套用南京的 WAF、数据库容器或证书。
+- 苏州采用 `watch-nanda-backend.service` 和 `watch-nanda-frontend.service`：后端 `127.0.0.1:7980`，Vite preview 提供同源 HTTPS `https://10.168.100.150:3000`。启动健康检查需设置 `WATCH_NANDA_HTTPS_HOST=10.168.100.150`；具体命令见 `docs/DEPLOYMENT.md`。systemd 的 `WorkingDirectory=` 使用路径值，不能复用 ExecStart 参数的双引号语法；真实 Linux 解析器验证覆盖含空格和 `%` 的路径。
+- 实际后端为项目 `backend/.venv`，基于 `/root/.pyenv/versions/3.12.13/bin/python3.12`；Node 位于 `/root/.nvm/versions/node/v24.18.0/bin`。系统默认 Python 3.14 不用于本项目初始化，升级前重新核对可执行文件。
+- 数据库复用 `mysql-app` 的 `monitor_db`，原挂载 `/home/test/watch-tower/mysqldata/mysql_data` → `/var/lib/mysql`，保留 `.env` 中的连接配置；只做增量迁移和索引补齐。该机已有 Redis/PostgreSQL 容器不属于当前平台依赖，不能随平台启停而删除或重建。
+- 苏州独立 CA、服务器证书及私钥在 `/etc/node-monitor/tls/`，客户端需信任苏州 CA；网页运维口令仍需管理员单独设置。由旧版私钥采集升级的节点需补充 SSH 密码，不自动复用私钥或把中心登录密码当作节点密码。启用苏州 Agent 部署前需完成上报地址及独立包适配，现有网页安装器仍按南京地址选路；命令行安装需显式指定苏州 URL 和 CA。
+
 ## 验证方式
 
 按变更范围选择验证，不为纯文档改动修改业务代码或启动生产服务：

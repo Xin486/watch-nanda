@@ -109,6 +109,8 @@ bash stop.sh            # 只停止本项目，保留 MySQL 和其他项目
 
 生产环境访问：`https://192.168.1.24`。页面、API、SSE 使用同源 HTTPS，网页终端使用 WSS；旧 HTTP 3000 入口已关闭。雷池控制台为 `https://192.168.1.24:9443`。
 
+苏州独立实例为 `https://10.168.100.150:3000`，使用独立 CA 和两个 systemd 服务；运行时、数据库升级、证书信任和启停命令见 [部署说明](docs/DEPLOYMENT.md#苏州实例10168100150)。
+
 监控平台和雷池控制台均允许 `192.168.1.0/24`，包括 SD-WAN 的 SNAT 网关 `192.168.1.199`；不得单独拒绝该网关，否则 SD-WAN 页面及 API 会返回 403。雷池控制台仍要求管理员登录，其他来源默认拒绝。
 
 现有雷池控制台的代理配置保存在 `deploy/production/safeline-console.conf`，生产副本为 `/etc/nginx/snippets/watch-nanda-safeline-console.conf`，由现有 Nginx 的 `http` 块引入。此配置要求雷池容器仅发布到 `127.0.0.1:19443`，并依赖现有 `$connection_upgrade` 映射；无需将雷池容器端口直接暴露到外网。

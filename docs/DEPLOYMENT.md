@@ -13,6 +13,34 @@ HTTPS 9443 → Nginx → https://127.0.0.1:19443 雷池控制台
 
 管理页面、API 和 SSE 使用同源 HTTPS，终端使用 WSS。管理入口及雷池控制台允许 `192.168.1.0/24`，包括 SD-WAN SNAT 网关 `192.168.1.199`。外部只开放 `/api/agent/report`。后端只监听回环地址，不再使用对外 HTTP 3000 入口。
 
+## 苏州实例（10.168.100.150）
+
+2026-10-23 核对：苏州仓库位于 `/home/test/watch-tower/watch-nanda`，归 root 所有，使用 test 登录后通过 sudo 管理。此实例使用独立的 `watch-nanda-backend.service` 和 `watch-nanda-frontend.service`，开机自启；后端仅监听 `127.0.0.1:7980`，前端 Vite preview 在 `https://10.168.100.150:3000` 提供页面、同源 API、SSE 和 WSS。此处没有配置南京实例的 Nginx/雷池链路。
+
+苏州使用项目 `backend/.venv`（Python 3.12.13），基础解释器 `/root/.pyenv/versions/3.12.13/bin/python3.12`，Node/npm 位于 `/root/.nvm/versions/node/v24.18.0/bin`。系统默认 Python 3.14 不符合本项目范围，升级前先核对上述路径仍存在。日常启停与只读结构检查：
+
+```bash
+cd /home/test/watch-tower/watch-nanda
+sudo env WATCH_NANDA_HTTPS_HOST=10.168.100.150 bash start.sh
+sudo bash stop.sh
+sudo backend/.venv/bin/python backend/migrate_agent.py --require-ready
+```
+
+需要重新初始化依赖或更新服务配置时，先备份并停止本项目，再使用兼容运行时；保留现场 `.env`、独立密钥和证书：
+
+```bash
+sudo env PYTHON_BIN=/root/.pyenv/versions/3.12.13/bin/python3.12 \
+  PATH=/root/.nvm/versions/node/v24.18.0/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  bash setup.sh --systemd
+sudo env WATCH_NANDA_HTTPS_HOST=10.168.100.150 bash start.sh
+```
+
+MySQL 为原有 Docker 容器 `mysql-app`，数据挂载 `/home/test/watch-tower/mysqldata/mysql_data` → `/var/lib/mysql`，仍使用 `.env` 中的 `10.168.100.150:3306/monitor_db`。本次在完整备份后新增 `agent_credentials`、节点的 `collection_mode` / `ssh_password_encrypted` / `email_alert_enabled`，并补齐 `server_stats(server_id,timestamp)` 复合索引；原节点 ID 和历史保留。已有 Redis/PostgreSQL 容器维持原状，不作为平台依赖操作。备份和恢复记录位于该机 `/root/watch-nanda-suzhou-upgrade-20261023-161620`，数据库备份包含敏感信息，按 root 私有文件保护，不放入 Git。
+
+TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.168.100.150`。客户端需导入该机 `ca.crt` 后通过 HTTPS 访问；CA 私钥不传给客户端。网页终端和部署操作使用独立运维口令，管理员可在项目目录执行 `sudo backend/.venv/bin/python backend/manage_ops.py` 交互设置，不能直接复用系统登录密码。旧版 SSH 私钥采集节点需逐台补充密码才能继续采集。
+
+本次未配置苏州 Agent 一键部署：网页安装器的内/外网上报地址仍为南京入口，苏州启用前需适配并构建匹配的独立包；不能用南京 CA 或上报地址代替苏州入口。命令行安装可显式使用 `--url https://10.168.100.150:3000/api/agent/report --ca-file /etc/node-monitor/tls/ca.crt`，仍须先完成包准备和目标机到该入口的网络验证。
+
 ## 配置来源
 
 | 配置 | 当前来源与用途 |

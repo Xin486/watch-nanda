@@ -134,6 +134,9 @@ def save_state(records):
 
 def port_free(port):
     with socket.socket() as sock:
+        # Match the server socket so connections in TIME_WAIT do not look like
+        # an unrelated listener after a clean shutdown.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(('0.0.0.0', port))
             return True
@@ -242,6 +245,14 @@ def systemd_quote(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
 
 
+def systemd_directory(value):
+    # WorkingDirectory takes a path value, not the ExecStart argument grammar.
+    value = str(value)
+    if not value.startswith('/') or any(char in value for char in '\n\r\x00'):
+        raise RuntimeError('systemd 工作目录必须是有效的绝对路径')
+    return value.replace('%', '%%')
+
+
 def install_services():
     if os.geteuid() != 0 or not Path('/run/systemd/system').exists():
         raise RuntimeError('--systemd 需要 root 及正在运行的 systemd')
@@ -290,7 +301,7 @@ def install_services():
         preflight = ('ExecStartPre='+systemd_quote(python)+' '+systemd_quote(ROOT/'backend'/'migrate_agent.py')+' --require-ready\n'
                      if name == BACKEND_UNIT else '')
         content = ('[Unit]\nDescription=Watch Nanda '+name+'\nAfter=network-online.target docker.service\nWants=network-online.target\n'
-                   '\n[Service]\nType=simple\nUser='+user+'\nWorkingDirectory='+systemd_quote(directory)+'\n'
+                   '\n[Service]\nType=simple\nUser='+user+'\nWorkingDirectory='+systemd_directory(directory)+'\n'
                    'Environment=PYTHONUNBUFFERED=1\n'+preflight+'ExecStart='+command+'\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=60\nUMask=0077\n'
                    '\n[Install]\nWantedBy=multi-user.target\n')
         path = Path('/etc/systemd/system')/name

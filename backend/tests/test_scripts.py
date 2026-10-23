@@ -115,6 +115,38 @@ class InstallerTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_systemd_directory_is_a_path_value_and_escapes_specifiers(self):
+        self.assertEqual(life.systemd_directory('/srv/watch nanda%/backend'),'/srv/watch nanda%%/backend')
+        for value in ('relative/backend','/srv/bad\npath','/srv/bad\rpath','/srv/bad\x00path'):
+            with self.assertRaises(RuntimeError):life.systemd_directory(value)
+
+    @unittest.skipUnless(sys.platform=='linux','Requires the Linux systemd parser')
+    def test_generated_systemd_units_pass_the_real_parser_with_spaces_and_percent_paths(self):
+        if not shutil.which('systemd-analyze'):self.skipTest('systemd-analyze not available')
+        with tempfile.TemporaryDirectory(prefix='watch nanda% ') as directory:
+            root=Path(directory);units=root/'units';units.mkdir();systemd=root/'systemd';systemd.mkdir()
+            python=root/'backend/.venv/bin/python';python.parent.mkdir(parents=True);python.symlink_to(sys.executable)
+            (root/'frontend').mkdir()
+            def path(value):
+                return units if str(value)=='/etc/systemd/system' else systemd if str(value)=='/run/systemd/system' else Path(value)
+            with patch.object(life,'ROOT',root),patch.object(life,'Path',side_effect=path),patch.object(life.os,'geteuid',return_value=0),patch.object(life,'unit_directory',return_value=None),patch.object(life,'read_state',return_value=[]),patch.object(life,'nginx_owned',return_value=False),patch.object(life.shutil,'which',return_value=sys.executable),patch.object(life,'run'):
+                life.install_services()
+            for name,role in ((life.BACKEND_UNIT,'backend'),(life.FRONTEND_UNIT,'frontend')):
+                self.assertIn('WorkingDirectory='+str(root/role).replace('%','%%')+'\n',(units/name).read_text())
+            checked=subprocess.run(['systemd-analyze','verify',str(units/life.BACKEND_UNIT),str(units/life.FRONTEND_UNIT)],capture_output=True,text=True,timeout=20)
+            self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
+
+    @unittest.skipUnless(sys.platform=='linux','Requires Linux TCP reuse semantics')
+    def test_port_probe_distinguishes_a_listener_from_its_closed_time_wait_connections(self):
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            listener.bind(('127.0.0.1',0));listener.listen();port=listener.getsockname()[1]
+            self.assertFalse(life.port_free(port))
+            with socket.create_connection(('127.0.0.1',port),timeout=2) as client:
+                accepted,_=listener.accept();accepted.close()
+                self.assertEqual(client.recv(1),b'')
+        self.assertTrue(life.port_free(port))
+
     def test_registered_waf_nginx_is_owned_only_by_its_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
             config=Path(directory)/'nginx.conf'
