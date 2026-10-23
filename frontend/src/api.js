@@ -35,7 +35,7 @@ export const api = {
   opsLogin: (password) => http.post('/api/ops/login', { password }),
   opsLogout: () => http.post('/api/ops/logout'),
   sshTest: (id, data) => http.post(`/api/ops/nodes/${id}/ssh-test`, data, { timeout: 45000 }),
-  trustHost: (id, fingerprint) => http.post(`/api/ops/nodes/${id}/trust-host`, { fingerprint }, { timeout: 30000 }),
+  trustHost: (id, fingerprint, confirmation = {}) => http.post(`/api/ops/nodes/${id}/trust-host`, { fingerprint, ...confirmation }, { timeout: 30000 }),
   deployAgent: (id, data) => http.post(`/api/ops/nodes/${id}/deploy`, data, { timeout: 45000 }),
   redeployAgent: (id, data) => http.post(`/api/ops/nodes/${id}/redeploy`, data, { timeout: 45000 }),
   deploymentJob: (id) => http.get(`/api/ops/jobs/${id}`),

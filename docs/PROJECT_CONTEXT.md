@@ -51,6 +51,8 @@ REST 和 SSE 都调用 `core/status.py`。前端 `useServers` 处理共享 SSE �
 
 前端源码路径均相对 `frontend/src/`，后端路径相对 `backend/`。完整目录图见 [AGENTS.md](../AGENTS.md#项目结构与职责)。
 
+SSH 连接仍严格核验主机指纹。`NodeConnectionPanel.vue` 共用原/新指纹确认弹窗，`useNodeAccess.js` 在明确确认后保存并继续原 SSH 测试或终端；取消、地址变化和退出登录不会替换信任。`core/operations.py` 的受认证 `trust-host` 重新握手并核对旧指纹及目标地址，只更新对应端点，备份原 known_hosts 后原子写入。批量部署的未知或变化指纹均进入等待核验状态，由用户明确确认再重试，不自动覆盖或继续尝试密码。
+
 ## 数据模型与关键口径
 
 - `servers`：节点身份、分组、启用状态、采集方式、加密 SSH 密码、提醒开关、实时 JSON 缓存与状态/告警时间。

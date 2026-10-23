@@ -1,5 +1,6 @@
 """Operator authentication, SSH secrets, terminal cleanup and notification controls."""
 import os
+import paramiko
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -21,6 +22,108 @@ from worker import tasks
 
 
 class OperationsTests(unittest.TestCase):
+    def trust_fixture(self):
+        home = Path(self.temp.name)/'home'
+        path = home/'.ssh'/'known_hosts'
+        path.parent.mkdir(parents=True)
+        old, new, other = (paramiko.RSAKey.generate(1024) for _ in range(3))
+        with self.Session() as db:
+            node=db.get(Server,1);node.ip_address='192.0.2.10';node.ssh_port=10022;db.commit()
+        lookup='[192.0.2.10]:10022'
+        unrelated=paramiko.HostKeys.hash_host('other.example')
+        hashed=paramiko.HostKeys.hash_host(lookup)
+        original=(f'# retain this comment\n{lookup},alias.example ssh-rsa {old.get_base64()}\n'
+                  f'{hashed} ssh-rsa {old.get_base64()}\n'
+                  f'{unrelated} ssh-rsa {other.get_base64()}\n'
+                  f'[192.0.2.10]:2200 ssh-rsa {other.get_base64()}\n')
+        path.write_bytes(original.encode())
+        transport=MagicMock();transport.get_remote_server_key.return_value=new
+        body={'fingerprint':ops.fingerprint(new),'previous_fingerprint':ops.fingerprint(old),
+              'expected_host':'192.0.2.10','expected_port':10022}
+        return home,path,old,new,other,transport,body
+
+    def test_changed_key_error_exposes_old_and_new_fingerprints_without_trusting(self):
+        old,new=(paramiko.RSAKey.generate(1024) for _ in range(2))
+        result=ops.safe_error(paramiko.BadHostKeyException('192.0.2.10',new,old))
+        self.assertEqual(result['code'],'host_key_changed')
+        self.assertEqual(result['previous_fingerprint'],ops.fingerprint(old))
+        self.assertEqual(result['fingerprint'],ops.fingerprint(new))
+        self.assertFalse(result['ok'])
+
+    def test_confirmed_key_replacement_preserves_aliases_hashes_other_ports_and_backup(self):
+        home,path,old,new,other,transport,body=self.trust_fixture()
+        before=path.read_bytes()
+        with self.client() as client, patch.object(ops.Path,'home',return_value=home), patch.object(ops.socket,'create_connection') as dial, patch.object(ops.paramiko,'Transport',return_value=transport):
+            self.assertEqual(client.post('/api/ops/nodes/1/trust-host',json=body).status_code,401)
+            dial.assert_not_called()
+            self.login(client)
+            response=client.post('/api/ops/nodes/1/trust-host',json=body)
+            self.assertEqual(response.status_code,200,response.text)
+            dial.assert_called_once_with(('192.0.2.10',10022),timeout=8)
+        known=paramiko.HostKeys(str(path))
+        self.assertTrue(known.check('[192.0.2.10]:10022',new))
+        self.assertFalse(known.check('[192.0.2.10]:10022',old))
+        self.assertTrue(known.check('alias.example',old))
+        self.assertTrue(known.check('other.example',other))
+        self.assertTrue(known.check('[192.0.2.10]:2200',other))
+        self.assertIn('# retain this comment',path.read_text())
+        backups=list(path.parent.glob('known_hosts.backup-*'))
+        self.assertEqual(len(backups),1);self.assertEqual(backups[0].read_bytes(),before)
+        transport.auth_password.assert_not_called();transport.close.assert_called_once()
+        if os.name=='posix':
+            self.assertEqual(path.stat().st_mode & 0o777,0o600)
+            self.assertEqual(backups[0].stat().st_mode & 0o777,0o600)
+
+    def test_replacement_requires_matching_old_key_and_rejects_key_changing_again(self):
+        home,path,old,new,other,transport,body=self.trust_fixture()
+        before=path.read_bytes()
+        variants=[{k:v for k,v in body.items() if k!='previous_fingerprint'},
+                  {**body,'previous_fingerprint':ops.fingerprint(other)},
+                  {**body,'fingerprint':ops.fingerprint(other)}]
+        with self.client() as client, patch.object(ops.Path,'home',return_value=home), patch.object(ops.socket,'create_connection'), patch.object(ops.paramiko,'Transport',return_value=transport):
+            self.login(client)
+            for variant in variants:
+                response=client.post('/api/ops/nodes/1/trust-host',json=variant)
+                self.assertEqual(response.status_code,409,response.text)
+                self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(list(path.parent.glob('known_hosts.backup-*')),[])
+
+    def test_trust_rejects_target_change_before_and_during_handshake(self):
+        home,path,old,new,other,transport,body=self.trust_fixture()
+        before=path.read_bytes()
+        with self.client() as client, patch.object(ops.Path,'home',return_value=home), patch.object(ops.socket,'create_connection') as dial, patch.object(ops.paramiko,'Transport',return_value=transport):
+            self.login(client)
+            response=client.post('/api/ops/nodes/1/trust-host',json={**body,'expected_port':22})
+            self.assertEqual(response.status_code,409);dial.assert_not_called()
+            def change_address():
+                with self.Session() as db:
+                    db.get(Server,1).ip_address='192.0.2.20';db.commit()
+                return new
+            transport.get_remote_server_key.side_effect=change_address
+            response=client.post('/api/ops/nodes/1/trust-host',json=body)
+            self.assertEqual(response.status_code,409,response.text)
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_first_unknown_key_still_works_and_active_deployment_cannot_change_trust(self):
+        home,path,old,new,other,transport,body=self.trust_fixture()
+        path.unlink()
+        body.pop('previous_fingerprint')
+        with self.client() as client, patch.object(ops.Path,'home',return_value=home), patch.object(ops.socket,'create_connection') as dial, patch.object(ops.paramiko,'Transport',return_value=transport):
+            self.login(client)
+            ops.active_jobs[1]='running-job'
+            self.assertEqual(client.post('/api/ops/nodes/1/trust-host',json=body).status_code,409)
+            dial.assert_not_called();ops.active_jobs.clear()
+            self.assertEqual(client.post('/api/ops/nodes/1/trust-host',json=body).status_code,200)
+        self.assertTrue(paramiko.HostKeys(str(path)).check('[192.0.2.10]:10022',new))
+
+    def test_failed_atomic_key_save_keeps_original_file(self):
+        home,path,old,new,other,transport,body=self.trust_fixture()
+        before=path.read_bytes()
+        with patch.object(ops.os,'replace',side_effect=OSError('simulated-write-failure')):
+            with self.assertRaises(OSError):ops.replace_known_host(path,'[192.0.2.10]:10022',new)
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(list(path.parent.glob('.known_hosts-*')),[])
+
     def setUp(self):
         test_monitor.MonitorTests.setUp(self)
         self.key = Path(self.temp.name)/'key'

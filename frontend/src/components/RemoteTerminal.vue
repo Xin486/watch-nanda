@@ -35,7 +35,7 @@ function disconnect() {
   emit('busy', false)
 }
 async function connect() {
-  if (connecting.value || props.access.testing || !props.access.validInput()) return
+  if (disposed || connecting.value || props.access.testing || !props.access.validInput()) return
   props.access.error = ''
   disconnect()
   const current = generation
@@ -71,9 +71,15 @@ async function connect() {
         resize()
       } else if (data.type === 'output') terminal.write(data.data)
       else if (data.type === 'error') {
-        props.access.error = data.message
-        props.access.connectionResult(data)
-        terminal.writeln(`\r\n[${data.message}]`)
+        if (['unknown_host', 'host_key_changed'].includes(data.code)) {
+          props.access.error = ''
+          disconnect()
+          props.access.connectionResult(data, connect)
+        } else {
+          props.access.error = data.message
+          props.access.connectionResult(data)
+          terminal.writeln(`\r\n[${data.message}]`)
+        }
       } else if (data.type === 'closed') terminal.writeln(`\r\n[${data.message}]`)
     }
     ws.onerror = () => { props.access.error = '终端连接失败，请检查 HTTPS、运维登录和 SSH 凭据。' }

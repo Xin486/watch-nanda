@@ -21,7 +21,7 @@
         </section>
         <form v-if="manualItem" class="management-card" @submit.prevent="submitManual">
           <h2>处理 {{ manualItem.hostname }} · #{{ manualItem.server_id }}</h2><p>{{ manualItem.message }}</p>
-          <template v-if="manualItem.status === 'needs_trust'"><p>请通过可信渠道核对 {{ manualItem.address }} 的主机指纹：</p><code>{{ manualItem.fingerprint }}</code><label class="management-check"><input v-model="confirmed" type="checkbox" required>我已核对该主机指纹</label></template>
+          <template v-if="manualItem.status === 'needs_trust'"><p>请通过可信渠道核对 {{ manualItem.address }} 的主机指纹：</p><template v-if="manualItem.previous_fingerprint"><p>原指纹</p><code>{{ manualItem.previous_fingerprint }}</code><p>新指纹（确认重装系统或密钥变更后再允许更新）</p></template><code>{{ manualItem.fingerprint }}</code><label class="management-check"><input v-model="confirmed" type="checkbox" required>我已核对该主机指纹，并允许{{ manualItem.previous_fingerprint ? '更换原指纹' : '保存信任' }}</label></template>
           <div class="management-fields"><label>SSH 用户名<input v-model="credentials.username" maxlength="50" :required="manualItem.status !== 'needs_trust'" autocomplete="off"></label><label>SSH 密码<input v-model="credentials.password" type="password" maxlength="1024" :required="manualItem.status !== 'needs_trust'" autocomplete="new-password" :placeholder="manualItem.status === 'needs_trust' ? '可留空，继续尝试常用或已存凭据' : '请输入此节点密码'"></label></div>
           <p>手动输入仅用于本次节点重试，不加入常用凭据列表。</p><div class="management-inline"><button class="management-primary" :disabled="busy || (manualItem.status === 'needs_trust' && !confirmed)">{{ busy ? '正在提交…' : manualItem.status === 'needs_trust' ? '信任并重新入队' : '使用此凭据重新入队' }}</button><button type="button" :disabled="busy" @click="clearManual">取消输入</button></div>
         </form>
@@ -112,7 +112,11 @@ async function submitManual() {
   if (item.status === 'needs_trust') {
     if (!confirmed.value) return
     busy.value = true
-    try { await api.trustHost(item.server_id, item.fingerprint) }
+    const confirmation = {}
+    if (item.previous_fingerprint) confirmation.previous_fingerprint = item.previous_fingerprint
+    if (item.host) confirmation.expected_host = item.host
+    if (item.port) confirmation.expected_port = item.port
+    try { await api.trustHost(item.server_id, item.fingerprint, confirmation) }
     catch (e) { if (!disposed && current === generation) access.handleError(e); delete body.password; credentials.password = ''; return }
     finally { if (current === generation) busy.value = false }
   }
@@ -133,6 +137,7 @@ async function stop() {
   catch (e) { if (!disposed && current === generation) access.handleError(e) }
   finally { if (current === generation) busy.value = false }
 }
+watch(() => JSON.stringify([manualItem.value?.fingerprint, manualItem.value?.previous_fingerprint, manualItem.value?.address]), () => { confirmed.value = false }, { flush: 'sync' })
 watch(() => access.authenticated, async authenticated => {
   generation++; controller?.abort(); clearInterval(timer); timer = null; clearManual(); logs.value = {}; logsLoading.value = 0; batch.value = null; recent.value = []; busy.value = false
   if (!authenticated) return
