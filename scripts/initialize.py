@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+import gzip
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
@@ -119,35 +120,60 @@ def docker_database(url):
         server.dispose()
 
 
-def schema_statements(content):
-    """The shipped schema contains only CREATE TABLE/INDEX, no routines or delimiters."""
-    content = re.sub(r'(?m)^\s*--.*$', '', content)
-    for statement in content.split(';'):
-        if statement.strip():
-            yield statement.strip()
-
-
 def apply_schema(connection, sql):
-    from sqlalchemy import inspect
-    for statement in schema_statements(sql):
-        table = re.match(r'create\s+table\s+(\w+)\s*\(', statement, re.I)
-        index = re.match(r'create\s+index\s+(\w+)\s+on\s+(\w+)', statement, re.I)
-        if table:
-            inspector = inspect(connection)
-            if inspector.has_table(table[1]):
-                continue
-            print('创建数据表：' + table[1], flush=True)
-        elif index:
-            inspector = inspect(connection)
-            if index[1] in {i['name'] for i in inspector.get_indexes(index[2])}:
-                continue
-            print('创建索引：' + index[1], flush=True)
-        else:
-            raise RuntimeError('初始化 SQL 包含未支持的语句，已停止，未忽略错误')
-        connection.exec_driver_sql(statement)
+    from core.schema import reconcile
+    reconcile(connection, sql)
 
 
-def initialize():
+def backup_database(engine, destination):
+    """Consistent MySQL logical backup, streamed with private file permissions."""
+    import pymysql
+    destination = Path(destination)
+    destination.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path = destination/'database-before.sql.gz'
+    raw = engine.raw_connection()
+    fd = None
+    try:
+        with raw.cursor() as cursor:
+            cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+            cursor.execute('START TRANSACTION WITH CONSISTENT SNAPSHOT')
+            cursor.execute("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
+            tables = [row[0] for row in cursor.fetchall()]
+        if not tables:
+            return
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as output:
+            fd = None
+            with gzip.GzipFile(fileobj=output, mode='wb') as archive:
+                def write(value):
+                    archive.write((value+'\n').encode('utf-8'))
+                write('-- Watch Nanda consistent backup; restore into an empty database.\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;')
+                for name in tables:
+                    identifier = quoted_identifier(name)
+                    with raw.cursor() as cursor:
+                        cursor.execute('SHOW CREATE TABLE '+identifier)
+                        write(cursor.fetchone()[1]+';')
+                    with raw.cursor(pymysql.cursors.SSCursor) as cursor:
+                        cursor.execute('SELECT * FROM '+identifier)
+                        columns = ','.join(quoted_identifier(item[0]) for item in cursor.description)
+                        prefix = f'INSERT INTO {identifier} ({columns}) VALUES ('
+                        for row in cursor:
+                            write(prefix+','.join(raw.escape(value) for value in row)+');')
+                write('SET FOREIGN_KEY_CHECKS=1;\n-- Backup completed')
+        raw.rollback()
+        print('数据库一致性备份完成：'+str(path), flush=True)
+    except BaseException:
+        if fd is not None:
+            os.close(fd)
+        # Keep failed backups distinguishable from a completed recovery artifact.
+        if path.exists():
+            path.rename(path.with_suffix(path.suffix+'.incomplete'))
+        raise
+    finally:
+        raw.close()
+
+
+def initialize(backup_dir=None, existing_install=False):
     prepare_env()
     from sqlalchemy import create_engine, inspect
     from sqlalchemy.engine import make_url
@@ -170,12 +196,17 @@ def initialize():
             version = str(connection.exec_driver_sql('SELECT VERSION()').scalar())
             if 'mariadb' in version.lower() or int(version.split('.')[0]) < 8:
                 raise RuntimeError('项目的历史 JSON_TABLE 查询要求 MySQL 8+，当前版本不支持')
+            exists = connection.exec_driver_sql('SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = %s', (url.database,)).first()
+            if existing_install and not exists:
+                raise RuntimeError('已有部署的数据库不存在；请核对原容器/端口/挂载，不会创建空库替代原库')
             connection.exec_driver_sql('CREATE DATABASE IF NOT EXISTS ' + quoted_identifier(url.database)
                                       + ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci')
     finally:
         server.dispose()
     engine = create_engine(url, hide_parameters=True, connect_args={'connect_timeout': 5})
     try:
+        if backup_dir:
+            backup_database(engine, backup_dir)
         with engine.begin() as connection:
             connection.exec_driver_sql('SET SESSION lock_wait_timeout = 10')
             apply_schema(connection, (ROOT / 'monitor_db.sql').read_text(encoding='utf-8-sig'))
@@ -200,7 +231,16 @@ def initialize():
 
 if __name__ == '__main__':
     try:
-        initialize()
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--prepare-env', action='store_true')
+        parser.add_argument('--backup-dir')
+        parser.add_argument('--existing-install', action='store_true')
+        args = parser.parse_args()
+        if args.prepare_env:
+            prepare_env()
+        else:
+            initialize(args.backup_dir, args.existing_install)
     except (Exception, KeyboardInterrupt) as error:
         # SQLAlchemy/Docker errors can contain connection parameters; do not dump them.
         message = str(error) if isinstance(error, RuntimeError) else type(error).__name__

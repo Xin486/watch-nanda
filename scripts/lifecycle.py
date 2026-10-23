@@ -15,6 +15,8 @@ import time
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'backend'))
+from core.site_config import apply_site
 BACKEND_UNIT = 'watch-nanda-backend.service'
 FRONTEND_UNIT = 'watch-nanda-frontend.service'
 RUNTIME = ROOT / '.runtime'
@@ -195,7 +197,7 @@ def standalone_start():
     previous = [r for r in read_state() if owned(r)]
     python = ROOT / 'backend' / '.venv' / 'bin' / 'python'
     vite = ROOT / 'frontend' / 'node_modules' / 'vite' / 'bin' / 'vite.js'
-    node = shutil.which('node')
+    node = os.environ.get('WATCH_NANDA_NODE') or shutil.which('node')
     if not python.is_file() or not vite.is_file() or not node or not (ROOT / 'frontend' / 'dist' / 'index.html').is_file():
         raise RuntimeError('项目尚未初始化，请先运行 bash setup.sh')
     # Authenticate/inspect schema before spawning a backend or a frontend.
@@ -253,6 +255,13 @@ def systemd_directory(value):
     return value.replace('%', '%%')
 
 
+def systemd_environment(value):
+    # Environment= does not expand $, unlike ExecStart's argument grammar.
+    if any(char in value for char in '\r\n\x00'):
+        raise RuntimeError('systemd 环境配置不能包含换行或空字符')
+    return '"'+value.replace('\\','\\\\').replace('"','\\"').replace('%','%%')+'"'
+
+
 def install_services():
     if os.geteuid() != 0 or not Path('/run/systemd/system').exists():
         raise RuntimeError('--systemd 需要 root 及正在运行的 systemd')
@@ -287,7 +296,7 @@ def install_services():
         index.replace(target/'index.html')
         frontend_service = 'nginx.service'
     else:
-        node = shutil.which('node')
+        node = os.environ.get('WATCH_NANDA_NODE') or shutil.which('node')
         if not node:
             raise RuntimeError('找不到 Node.js')
         vite = ROOT/'frontend'/'node_modules'/'vite'/'bin'/'vite.js'
@@ -300,9 +309,12 @@ def install_services():
     for name, directory, command in units:
         preflight = ('ExecStartPre='+systemd_quote(python)+' '+systemd_quote(ROOT/'backend'/'migrate_agent.py')+' --require-ready\n'
                      if name == BACKEND_UNIT else '')
+        site_environment = ''.join('Environment='+systemd_environment(key+'='+os.environ[key])+'\n'
+                                   for key in ('WATCH_NANDA_HTTPS_HOST', 'WATCH_NANDA_TLS_CA', 'WATCH_NANDA_TLS_CERT',
+                                               'WATCH_NANDA_TLS_KEY') if key in os.environ)
         content = ('[Unit]\nDescription=Watch Nanda '+name+'\nAfter=network-online.target docker.service\nWants=network-online.target\n'
                    '\n[Service]\nType=simple\nUser='+user+'\nWorkingDirectory='+systemd_directory(directory)+'\n'
-                   'Environment=PYTHONUNBUFFERED=1\n'+preflight+'ExecStart='+command+'\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=60\nUMask=0077\n'
+                   'Environment=PYTHONUNBUFFERED=1\n'+site_environment+preflight+'ExecStart='+command+'\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=60\nUMask=0077\n'
                    '\n[Install]\nWantedBy=multi-user.target\n')
         path = Path('/etc/systemd/system')/name
         if path.exists():
@@ -320,8 +332,7 @@ def install_services():
 def prepare_setup():
     """Do not replace virtualenv/node_modules under a running application."""
     units = [BACKEND_UNIT, FRONTEND_UNIT]
-    if nginx_owned():
-        units.append('nginx.service')
+    # Nginx/WAF can stay up while dependencies change; assets publish index last.
     for unit in units:
         directory = unit_directory(unit)
         if unit != 'nginx.service' and directory is not None:
@@ -336,7 +347,30 @@ def prepare_setup():
         raise RuntimeError('请先运行 bash stop.sh，再更新运行中的项目依赖')
 
 
+def check_setup_lock():
+    """Prevent start/stop racing an installer that is replacing dependencies."""
+    import fcntl
+    path = RUNTIME/'setup.lock'
+    if not path.exists():
+        return
+    with path.open() as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            parent = os.getppid()
+            if os.environ.get('WATCH_NANDA_SETUP_PID') == str(parent):
+                try:
+                    args = (Path('/proc')/str(parent)/'cmdline').read_bytes().split(b'\0')
+                    if os.fsencode(ROOT/'scripts/setup_project.py') in args:
+                        return
+                except OSError:
+                    pass
+            raise RuntimeError('初始化/升级正在替换项目环境，请完成后再启动/停止服务') from None
+
+
 def main():
+    apply_site()
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['start','stop','restart','install','mode','prepare'])
     args = parser.parse_args()
@@ -345,6 +379,7 @@ def main():
     if args.action == 'mode':
         print('systemd' if managed_services() else 'standalone')
         return
+    check_setup_lock()
     with locked():
         if args.action == 'prepare':
             prepare_setup()

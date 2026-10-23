@@ -5,6 +5,7 @@ import getpass
 import hashlib
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -28,6 +29,9 @@ class InstallError(RuntimeError):
 
 
 def default_report_url(ip):
+    from core.config import settings  # Resolve .env/local site before choosing the target.
+    if os.getenv('AGENT_REPORT_URL'):
+        return os.environ['AGENT_REPORT_URL']
     return DEFAULT_URL if ipaddress.ip_address(ip) in ipaddress.ip_network('192.168.1.0/24') else PUBLIC_URL
 
 
@@ -301,8 +305,8 @@ def parse_args():
     url = urlparse(args.url)
     if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
         parser.error('--url 需要不含凭据的 HTTPS 地址')
-    if args.ca_file is None and args.url in (DEFAULT_URL,PUBLIC_URL):
-        args.ca_file = Path('/etc/node-monitor/tls/ca.crt')
+    if args.ca_file is None and (args.url in (DEFAULT_URL,PUBLIC_URL) or os.getenv('AGENT_REPORT_URL') == args.url):
+        args.ca_file = Path(os.getenv('AGENT_CA_FILE', '/etc/node-monitor/tls/ca.crt'))
     if args.ca_file is not None:
         import ssl
         try:

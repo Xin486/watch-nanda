@@ -1,46 +1,24 @@
 """Explicit, idempotent schema migration; never run on application import."""
 import argparse
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from models.database import engine
-from models.models import AgentCredential
+from core.schema import reconcile
 
 
 def migrate(check_only=False):
-    inspector = inspect(engine)
-    columns = {c['name'] for c in inspector.get_columns('servers')}
-    missing_column = 'collection_mode' not in columns
-    missing_table = not inspector.has_table('agent_credentials')
-    missing_password = 'ssh_password_encrypted' not in columns
-    missing_alert = 'email_alert_enabled' not in columns
-    print('servers.collection_mode:', 'missing' if missing_column else 'present')
-    print('agent_credentials:', 'missing' if missing_table else 'present')
-    print('servers.ssh_password_encrypted:', 'missing' if missing_password else 'present')
-    print('servers.email_alert_enabled:', 'missing' if missing_alert else 'present')
+    with engine.begin() as connection:
+        if engine.dialect.name == 'mysql' and not check_only:
+            connection.execute(text('SET SESSION lock_wait_timeout = 10'))
+        ready = reconcile(connection, check_only=check_only)
     if check_only:
         print('Check only: no schema or data changes made.')
-        return not (missing_column or missing_table or missing_password or missing_alert)
-    if missing_column:
-        with engine.begin() as connection:
-            if engine.dialect.name == 'mysql':
-                # Bound metadata lock waits; a blocked deploy should fail and be retried.
-                connection.execute(text('SET SESSION lock_wait_timeout = 10'))
-            connection.execute(text("ALTER TABLE servers ADD COLUMN collection_mode VARCHAR(10) NOT NULL DEFAULT 'ssh'"))
-    AgentCredential.__table__.create(engine, checkfirst=True)
-    if missing_password:
-        with engine.begin() as connection:
-            if engine.dialect.name == 'mysql':
-                connection.execute(text('SET SESSION lock_wait_timeout = 10'))
-            connection.execute(text('ALTER TABLE servers ADD COLUMN ssh_password_encrypted TEXT NULL'))
-    if missing_alert:
-        with engine.begin() as connection:
-            if engine.dialect.name == 'mysql':
-                connection.execute(text('SET SESSION lock_wait_timeout = 10'))
-            connection.execute(text('ALTER TABLE servers ADD COLUMN email_alert_enabled BOOLEAN NOT NULL DEFAULT 1'))
-    print('Monitoring schema ready; existing collection modes and history preserved.')
+    else:
+        print('Monitoring schema ready; existing node IDs, credentials and history preserved.')
+    return ready if check_only else True
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Add the agent schema without altering historical data')
+    parser = argparse.ArgumentParser(description='Add missing monitoring tables, columns and indexes without rewriting existing data')
     parser.add_argument('--check', action='store_true', help='Inspect the schema without changing it')
     parser.add_argument('--require-ready', action='store_true', help='Read-only check, exit 2 if migration is required')
     args = parser.parse_args()

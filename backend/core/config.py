@@ -20,6 +20,8 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent.parent
 if load_dotenv:
     load_dotenv(BASE_DIR / ".env")
+from core.site_config import apply_site
+apply_site()
 
 
 class Settings:

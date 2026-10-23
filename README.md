@@ -23,14 +23,17 @@ GitHub 默认分支及项目主线为 `feat/sse-realtime-push`，沿用该分支
 
 ### 方式一：一键初始化（推荐）
 
-要求机器已安装 Python 3.10~3.12（含 venv）、Node.js 18+ 和 npm；自动创建本地数据库时还需要 Docker，然后：
+在 Linux 仓库目录执行（Debian/Ubuntu 可自动安装缺少的系统组件；联网下载需要访问系统软件源、PyPI、Node 官方站及容器镜像源）：
 
 ```bash
-bash setup.sh    # 创建独立 venv、安装依赖、准备数据库、迁移并构建前端
-bash start.sh    # 后台启动；重复执行不会新增实例
+sudo bash setup.sh --host <本机IP或域名>
 ```
 
-`setup.sh` 可重复执行，保留已有 `.env` 和数据；只有新建 `.env` 时才生成随机数据库密码，且不打印密码。
+`setup.sh` 完成运行时、独立 venv、锁定依赖、MySQL、全部业务表/字段/索引、HTTPS 证书、SSH 加密密钥、网页运维口令和本机架构 Agent 独立包，最后启动并检查服务。root 且运行 systemd 时默认安装开机自启服务；可用 `--standalone` 选择后台模式。兼容的 Python 3.10–3.12 / Node.js 18+ 优先复用，缺少时安装项目私有运行时，不替换系统 Python/Node。
+
+脚本可重复执行，自动停止已确认归属的本项目进程后覆盖依赖和前端，保留已有 `.env`、密钥、证书和数据。每次备份在 `.runtime/setup-backups/`，已有库迁移前生成权限 600 的一致性压缩 SQL 备份；失败尝试恢复依赖、构建及服务配置，不回退数据库增量结构。部署前先结束网页终端、Agent 部署和批量队列；安装器检测到运行中的 Agent 子进程会拒绝升级。
+
+首次生成 `.env` 时使用随机数据库密码且不打印。首次网页运维口令交互输入至少 12 字符；非交互运行时随机生成并只写入权限 600 的 `.runtime/initial-ops-password`。也可用 `--ops-password-file /安全路径/文件` 传入当前账户拥有的权限 600 文件；已有运维口令始终保留。口令、数据库备份及 `.runtime` 不加入 Git。
 已有本地/远程 MySQL 8+ 均直接连接，不需要 Docker 或 mysql 命令行客户端；仅无本地数据库时自动使用 Docker 创建 MySQL，默认只绑定回环地址。
 不会删除或重建原有数据卷，也不会用 `--force` 忽略 SQL 错误。
 
@@ -41,19 +44,17 @@ Python 依赖安装到 `backend/.venv`，前端使用锁文件执行 `npm ci`。
 先按 [部署说明](docs/DEPLOYMENT.md) 核对现场服务、备份配置及数据库，再在维护窗口升级：
 
 ```bash
-bash stop.sh
 sudo bash setup.sh --systemd
-sudo bash start.sh
 ```
 
-已经安装本项目 systemd 服务时，setup 会自动识别该模式（需 root）。安装时要求项目停止，防止替换正在使用的依赖。
+已经安装本项目 systemd 服务时，setup 会自动识别该模式（需 root），确认归属后自行停止并升级，完成后启动。已有站点地址保存在本地 `.runtime/site.json`，不需要每次指定 `--host`。
 首次安装 systemd 模式默认创建后端和前端预览服务；在当前 192.168.1.24 上会复用仅属于本项目的 Nginx，并更新静态前端目录。
 不会覆盖其他项目的同名服务，也不会接管共享 Nginx。通过 `WATCH_NANDA_SERVICE_USER` 可指定运行账户，默认 root 以兼容现有 SSH 节点；普通账户需要对应的文件、数据库和采集权限。
 初始化不会创建 SSH 免密密钥。节点 Agent 的 HTTPS 入口及内部 CA 接入步骤见 [Agent 接入说明](agent/README.md)。
-监控中心初始化后，可先用 `bash agent/build.sh` 构建含运行时的独立 Agent 包，再运行 `sudo bash install-agent.sh` 输入目标 IP、SSH 用户和密码安装；节点无需 Python/pip，只检查可加 `--check-only`。
-脚本复用已有节点并保留历史，不创建 SSH 免密密钥；192.168.1.* 目标默认用内网 HTTPS，其余默认用 114.212.165.149:59443，详见 Agent 接入说明。
+初始化默认构建或复用源码哈希匹配的本机架构独立 Agent 包。可用 `--skip-agent-build` 暂时跳过（网页部署需之后运行 `bash agent/build.sh`）；其他架构需在对应 Linux 构建机准备。运行 `sudo bash install-agent.sh` 输入目标 IP、SSH 用户和密码安装；节点无需 Python/pip，只检查可加 `--check-only`。
+脚本复用已有节点并保留历史，不创建 SSH 免密密钥。新独立站点保存自己的 `AGENT_REPORT_URL` / `AGENT_CA_FILE`；已有南京 WAF 站点保留内外网分流默认值。可在 `backend/.env` 显式覆盖这两个配置，详见 Agent 接入说明。
 首次部署与重部署均为覆盖安装：自动接管中断记录，确认旧 Agent 进程完全退出并移除旧服务/配置后才更新 Token，验证新版真实上报后清理旧安装文件。真实并发部署会被互斥锁阻止；旧进程卡在内核中无法终止时明确失败，不自动重启整机或 GPU。`--check-only` 仍只检查。
-`--skip-deps` 可跳过已安装依赖的更新，仍执行数据库校验、迁移和前端构建。
+`--skip-deps` 可复用已安装依赖，仍执行数据库校验、迁移和前端构建；`--no-bootstrap` 禁止自动安装系统/运行时组件，`--no-start` 完成后保持停止。已有库只补缺表、缺字段和索引，不重建表、不删除列，不改变既有值或类型；历史缺失指标保留 NULL。已有记录缺少身份字段时明确失败，不伪造 ID 或 Token。
 
 ### 方式二：手动部署
 
@@ -119,7 +120,7 @@ bash stop.sh            # 只停止本项目，保留 MySQL 和其他项目
 
 独立模式和 Vite 开发预览也使用 HTTPS：默认读取 `/etc/node-monitor/tls/server.crt` 和 `server.key`，可通过 `WATCH_NANDA_TLS_CERT`、`WATCH_NANDA_TLS_KEY` 指定证书文件，访问 `https://<证书中的服务器地址>:3000`。`/api` 由 Vite 代理到本机后端，不对外开放 7980。没有证书时启动失败，不回退 HTTP。
 
-启动脚本验证 HTTPS 证书，默认健康检查地址为 `192.168.1.24`，可用 `WATCH_NANDA_HTTPS_HOST` 指定证书中的主机名/IP；私有 CA 默认 `/etc/node-monitor/tls/ca.crt`，可用 `WATCH_NANDA_TLS_CA` 覆盖。浏览器和节点需信任该 CA。HTTP 仅用于服务器回环地址上的内部代理及后端健康检查。
+启动脚本验证 HTTPS 证书，优先使用初始化保存在 `.runtime/site.json` 的本站地址和运行时；旧站点未初始化时仍默认 `192.168.1.24`。环境变量及 `backend/.env` 可覆盖站点配置。私有 CA 默认 `/etc/node-monitor/tls/ca.crt`，普通账户安装使用 `.runtime/secure/`；浏览器和节点需信任该 CA。已有证书保留并核对域名/有效期，不自动轮换信任。HTTP 仅用于回环代理及健康检查。
 
 已接入雷池的生产 Nginx 使用 `# watch-nanda-managed-root: <项目绝对路径>` 标记归属。启动、升级脚本识别此标记并保留现有 WAF 配置，不创建第二个前端服务。`deploy/production/nginx.conf` 是未接入 WAF 时的基础 HTTPS 配置，不应覆盖现有雷池入口。
 
@@ -188,14 +189,13 @@ Dashboard 在「算力大屏」右侧提供月亮 / 太阳按钮：白天采用�
 
 ## 目录结构
 
-面向后续开发的项目前置提示词见 [AGENTS.md](AGENTS.md)，完整架构、Git 改动阶段及有日期的生产核对结果见 [项目上下文](docs/PROJECT_CONTEXT.md)。每次改动后应检查这些说明是否需要同步，具体规则写在 AGENTS.md 中。
+完整架构、Git 改动阶段及有日期的生产核对结果见 [项目上下文](docs/PROJECT_CONTEXT.md)。开发者可在本地维护 `AGENTS.md`；该文件已被 Git 忽略，不随仓库同步。每次改动后检查 README、架构及部署说明是否仍准确。
 
 ```
 watch-nanda/
-├── AGENTS.md                 # 项目前置提示词、模块职责与每轮更新检查规则
 ├── README.md                 # 使用与部署说明
 ├── docs/                     # 架构与进度（PROJECT_CONTEXT）、部署（DEPLOYMENT）
-├── setup.sh                  # 初始化依赖、数据库、迁移并构建前端
+├── setup.sh                  # 从零初始化/覆盖升级及自动启动
 ├── start.sh / stop.sh        # 幂等启停入口（systemd 或受控后台模式）
 ├── install-agent.sh          # 中心侧交互安装 Agent
 ├── monitor_db.sql            # 新库结构；已有库使用增量迁移
@@ -220,7 +220,7 @@ watch-nanda/
 │   ├── tests/                # Node 前端回归
 │   └── vite.config.js        # HTTPS 开发/预览与 API/WebSocket 代理
 ├── agent/                    # 节点采样上报、安装回滚、独立包构建与说明
-├── scripts/                  # 数据库初始化、生命周期、中心安装编排
+├── scripts/                  # setup_project/bootstrap/setup_security、增量初始化、生命周期、Agent 安装
 └── deploy/production/        # 基础 Nginx 与雷池控制台配置
 ```
 

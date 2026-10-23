@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 import sys
@@ -42,12 +43,19 @@ class InstallerTests(unittest.TestCase):
         return path
 
     def test_internal_and_public_addresses_are_selected_by_target_subnet(self):
-        self.assertEqual(installer.default_report_url('192.168.1.8'),installer.DEFAULT_URL)
-        for address in ('192.168.2.8','114.212.173.212','172.16.66.177','::1'):
-            self.assertEqual(installer.default_report_url(address),installer.PUBLIC_URL)
+        with patch.dict(os.environ,{'AGENT_REPORT_URL':''}):
+            self.assertEqual(installer.default_report_url('192.168.1.8'),installer.DEFAULT_URL)
+            for address in ('192.168.2.8','114.212.173.212','172.16.66.177','::1'):
+                self.assertEqual(installer.default_report_url(address),installer.PUBLIC_URL)
         args=['install_agent.py','--ip','114.212.173.212','--user','root','--port','22','--url','https://custom.invalid/report']
         with patch.object(sys,'argv',args):
             self.assertEqual(installer.parse_args().url,'https://custom.invalid/report')
+
+    def test_configured_site_report_url_overrides_nanjing_subnet_defaults(self):
+        url='https://10.168.100.150:3000/api/agent/report'
+        with patch.dict(os.environ,{'AGENT_REPORT_URL':url}):
+            for address in ('192.168.1.8','10.168.100.8','114.212.173.212'):
+                self.assertEqual(installer.default_report_url(address),url)
 
     def test_bundle_validation_rejects_path_traversal_and_stale_sources(self):
         with tempfile.TemporaryDirectory() as directory:

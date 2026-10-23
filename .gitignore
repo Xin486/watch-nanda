@@ -37,3 +37,6 @@ agent/config.json
 
 # 常用 SSH 凭据存储文件
 ssh-profiles.json
+
+# Local agent instructions are maintained per checkout, never published.
+[Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]

@@ -1,6 +1,6 @@
 # 项目架构与现有改动进度
 
-本次梳理日期：2026-10-19（Asia/Shanghai）。依据为本地源码、Git 历史、既有部署记录及生产只读检查。后续开发规则见仓库根目录 [AGENTS.md](../AGENTS.md)。本文中的提交和节点数量是核对快照，不是长期固定值。
+本次架构梳理日期：2026-10-19（Asia/Shanghai），后续部署变更见 [部署说明](DEPLOYMENT.md)。依据为源码、Git 历史和有日期的现场检查；快照不代表实时状态。开发者的 `AGENTS.md` 仅本地维护，已忽略并停止仓库同步。
 
 ## 开机恢复补充核对（2026-10-21）
 
@@ -49,7 +49,7 @@ REST 和 SSE 都调用 `core/status.py`。前端 `useServers` 处理共享 SSE �
 | 管理页主题与图表配色 | `useTheme.js`、`utils/theme.js`、`styles/theme.css` | 不改变采集和数据接口 |
 | 初始化、启停与部署归属检查 | 根目录 Shell 入口 | `scripts/initialize.py`、`scripts/lifecycle.py`、`deploy/production/` |
 
-前端源码路径均相对 `frontend/src/`，后端路径相对 `backend/`。完整目录图见 [AGENTS.md](../AGENTS.md#项目结构与职责)。
+前端源码路径均相对 `frontend/src/`，后端路径相对 `backend/`。仓库目录图见 [README](../README.md#目录结构)。初始化由 `scripts/setup_project.py` 编排；`bootstrap.py` 准备兼容运行时，`setup_security.py` 初始化本站 HTTPS 与运维认证，`core/schema.py` 按受审阅的 SQL 补齐缺表、字段及索引。
 
 SSH 连接仍严格核验主机指纹。`NodeConnectionPanel.vue` 共用原/新指纹确认弹窗，`useNodeAccess.js` 在明确确认后保存并继续原 SSH 测试或终端；取消、地址变化和退出登录不会替换信任。`core/operations.py` 的受认证 `trust-host` 重新握手并核对旧指纹及目标地址，只更新对应端点，备份原 known_hosts 后原子写入。批量部署的未知或变化指纹均进入等待核验状态，由用户明确确认再重试，不自动覆盖或继续尝试密码。
 
@@ -114,4 +114,4 @@ SSH 连接仍严格核验主机指纹。`NodeConnectionPanel.vue` 共用原/新�
 - `--source` Agent 安装、旧书签重定向、Nginx 归属识别和现有数据库兼容字段仍被代码或测试使用，继续保留。不能把“较早引入”直接等同于“无用”。
 - Agent 安装的当前源码还检查 UFW/firewalld 并管理仅到上报地址/端口的出站规则，保留原有策略和回滚记录；最终成功仍以服务账户真实上报为准。重部署 API 仅接受已有 Agent 节点，不改变节点 ID 和历史。发布前必须重新构建匹配安装器的独立包；每次发布的提交、包摘要、备份路径和验收结果记录在 `outputs/` 的发布审计中。
 - Agent 首次/重部署均覆盖，旧版健康也不跳过。中心持有节点 SSH 心跳会话锁，节点单步检查会话和操作锁；中断安装标记自动归档接管。新版准备完成后，先确认旧进程退出并移除旧服务/config/current，再签发 Token 并激活；当前尝试失败则恢复备份，成功后清理旧安装版本。D 状态进程不能视为已终止，停止和子命令回收都有时限，不能靠自动重启 GPU/整机处理。
-- 验证命令见 [AGENTS.md](../AGENTS.md#验证方式)，结果应按每轮实际运行情况报告；有日期的生产快照不能替代本轮代码的回归验证。
+- 验证命令见 [README](../README.md#回归测试)，结果按每轮实际运行情况报告；有日期的生产快照不能替代本轮代码回归验证。

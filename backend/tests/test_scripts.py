@@ -57,7 +57,8 @@ class InstallerTests(unittest.TestCase):
         connection=Mock()
         metadata=Mock()
         metadata.has_table.side_effect=lambda name: name=='servers'
-        metadata.get_indexes.return_value=[{'name':'already_present'}]
+        metadata.get_columns.return_value=[{'name':'id'}]
+        metadata.get_indexes.return_value=[{'name':'already_present', 'column_names':['id'], 'unique':False}]
         schema='CREATE TABLE servers (id int); CREATE TABLE agent_credentials (server_id int); CREATE INDEX already_present ON servers (id); CREATE INDEX new_index ON servers (id);'
         with patch('sqlalchemy.inspect',return_value=metadata):
             init.apply_schema(connection,schema)
@@ -115,6 +116,10 @@ class InstallerTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_systemd_environment_preserves_literal_dollars_and_escapes_percent(self):
+        self.assertEqual(life.systemd_environment('WATCH_NANDA_TLS_KEY=/srv/a$b%/key'), '"WATCH_NANDA_TLS_KEY=/srv/a$b%%/key"')
+        with self.assertRaises(RuntimeError):life.systemd_environment('KEY=bad\nline')
+
     def test_systemd_directory_is_a_path_value_and_escapes_specifiers(self):
         self.assertEqual(life.systemd_directory('/srv/watch nanda%/backend'),'/srv/watch nanda%%/backend')
         for value in ('relative/backend','/srv/bad\npath','/srv/bad\rpath','/srv/bad\x00path'):
@@ -212,7 +217,7 @@ class LifecycleTests(unittest.TestCase):
             unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
             records=[]
             try:
-                with patch.dict(os.environ,{'WATCH_NANDA_HTTPS_HOST':'127.0.0.1','WATCH_NANDA_TLS_CERT':str(cert),'WATCH_NANDA_TLS_KEY':str(key),'WATCH_NANDA_TLS_CA':str(cert)}),patch.object(life,'ROOT',root),patch.object(life,'RUNTIME',root/'.runtime'),patch.object(life,'BACKEND_PORT',unused_port()),patch.object(life,'FRONTEND_PORT',unused_port()),patch.object(life.shutil,'which',return_value=sys.executable):
+                with patch.dict(os.environ,{'WATCH_NANDA_NODE':sys.executable,'WATCH_NANDA_HTTPS_HOST':'127.0.0.1','WATCH_NANDA_TLS_CERT':str(cert),'WATCH_NANDA_TLS_KEY':str(key),'WATCH_NANDA_TLS_CA':str(cert)}),patch.object(life,'ROOT',root),patch.object(life,'RUNTIME',root/'.runtime'),patch.object(life,'BACKEND_PORT',unused_port()),patch.object(life,'FRONTEND_PORT',unused_port()),patch.object(life.shutil,'which',return_value=sys.executable):
                     life.ensure_runtime()
                     life.standalone_start();records=life.read_state()
                     self.assertEqual(len(records),2)

@@ -21,25 +21,22 @@ HTTPS 9443 → Nginx → https://127.0.0.1:19443 雷池控制台
 
 ```bash
 cd /home/test/watch-tower/watch-nanda
-sudo env WATCH_NANDA_HTTPS_HOST=10.168.100.150 bash start.sh
+sudo bash start.sh
 sudo bash stop.sh
 sudo backend/.venv/bin/python backend/migrate_agent.py --require-ready
 ```
 
-需要重新初始化依赖或更新服务配置时，先备份并停止本项目，再使用兼容运行时；保留现场 `.env`、独立密钥和证书：
+重新初始化或升级时，脚本自动发现兼容的现有 pyenv/NVM 运行时，保留现场 `.env`、密钥、证书并自行停止、覆盖及启动本项目：
 
 ```bash
-sudo env PYTHON_BIN=/root/.pyenv/versions/3.12.13/bin/python3.12 \
-  PATH=/root/.nvm/versions/node/v24.18.0/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  bash setup.sh --systemd
-sudo env WATCH_NANDA_HTTPS_HOST=10.168.100.150 bash start.sh
+sudo bash setup.sh --systemd --host 10.168.100.150
 ```
 
 MySQL 为原有 Docker 容器 `mysql-app`，数据挂载 `/home/test/watch-tower/mysqldata/mysql_data` → `/var/lib/mysql`，仍使用 `.env` 中的 `10.168.100.150:3306/monitor_db`。本次在完整备份后新增 `agent_credentials`、节点的 `collection_mode` / `ssh_password_encrypted` / `email_alert_enabled`，并补齐 `server_stats(server_id,timestamp)` 复合索引；原节点 ID 和历史保留。已有 Redis/PostgreSQL 容器维持原状，不作为平台依赖操作。备份和恢复记录位于该机 `/root/watch-nanda-suzhou-upgrade-20261023-161620`，数据库备份包含敏感信息，按 root 私有文件保护，不放入 Git。
 
-TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.168.100.150`。客户端需导入该机 `ca.crt` 后通过 HTTPS 访问；CA 私钥不传给客户端。网页终端和部署操作使用独立运维口令，管理员可在项目目录执行 `sudo backend/.venv/bin/python backend/manage_ops.py` 交互设置，不能直接复用系统登录密码。旧版 SSH 私钥采集节点需逐台补充密码才能继续采集。
+TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.168.100.150`。客户端需导入该机 `ca.crt` 后通过 HTTPS 访问；CA 私钥不传给客户端。2026-10-23 已设置网页运维口令，并通过 HTTPS 登录、会话和常用凭据接口验证。运维摘要独立于系统账号保存；系统密码变化不会自动同步。管理员可运行 `sudo backend/.venv/bin/python backend/manage_ops.py` 单独修改。旧版 SSH 私钥采集节点仍需逐台补充密码才能继续采集。
 
-本次未配置苏州 Agent 一键部署：网页安装器的内/外网上报地址仍为南京入口，苏州启用前需适配并构建匹配的独立包；不能用南京 CA 或上报地址代替苏州入口。命令行安装可显式使用 `--url https://10.168.100.150:3000/api/agent/report --ca-file /etc/node-monitor/tls/ca.crt`，仍须先完成包准备和目标机到该入口的网络验证。
+新初始化流程将苏州 Agent 上报入口 `https://10.168.100.150:3000/api/agent/report` 和本站 CA 保存到 `.runtime/site.json`，网页/命令行安装器共同读取；不再沿用南京入口。默认构建本机架构的独立包，其他架构需另外准备。目标机实际部署仍需管理员主动发起、提供该节点凭据并核验指纹，成功必须验证真实 HTTPS 上报。
 
 ## 配置来源
 
@@ -47,6 +44,7 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 | --- | --- |
 | 后端服务 | `scripts/lifecycle.py` 按仓库位置、venv 和运行账户生成 `watch-nanda-backend.service`；不维护另一份静态服务模板 |
 | 数据库及阈值 | 环境变量优先于 `backend/.env`，配置模板为 `backend/.env.example` |
+| 本站地址与运行时 | `.runtime/site.json`（不入 Git）；环境变量和 `.env` 优先；保存 HTTPS、Node、密钥路径及独立站点 Agent 入口 |
 | 生产 Nginx/WAF | 保留现场配置和 `# watch-nanda-managed-root: <仓库绝对路径>` 标记；基础模板 `deploy/production/nginx.conf` 不能覆盖现有 WAF 配置 |
 | 雷池控制台代理 | `deploy/production/safeline-console.conf`；生产副本 `/etc/nginx/snippets/watch-nanda-safeline-console.conf` |
 | TLS | `/etc/node-monitor/tls/`；节点只需受信任的 CA 公钥证书 |
@@ -62,18 +60,23 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 
 在维护窗口使用当前部署所需的管理员账户：
 
-1. 在现有版本目录运行 `sudo bash stop.sh`，确认只停止本项目。
-2. 更新到已确认的分支/提交，保留现场 `.env` 和本地差异。
-3. 执行以下初始化和启动命令：
+1. 结束网页终端，完成/停止 Agent 安装及批量队列，保存工作区差异和当前提交。
+2. 更新到已确认提交，保留 `.env`、本地差异和本地 `AGENTS.md`（仓库已停止同步该文件；首次跨此提交更新前另存并在更新后恢复）。
+3. 执行覆盖升级，脚本会停止已确认归属的服务，完成后自动启动：
 
 ```bash
 sudo bash setup.sh --systemd
-sudo bash start.sh
 ```
 
-`setup.sh` 保留已有配置和数据库，按锁文件安装依赖、幂等补齐表/索引、执行增量迁移、构建前端，再生成服务。识别属于本项目的 Nginx 时更新静态目录并保留现有 WAF 配置；安装过程本身不会启动服务。依赖已满足时可加 `--skip-deps`，但不会跳过数据库检查和前端构建。
+`setup.sh` 准备 Python/Node、项目依赖、MySQL、HTTPS、运维认证、增量结构、前端和 Agent 包。已有配置不覆盖；升级备份位于 `.runtime/setup-backups/<时间>/`，包含旧依赖、构建、服务配置、受保护配置及已有库的一致性 `database-before.sql.gz`。自动恢复只回退依赖、构建及服务配置，源码需按记录恢复匹配的 Git 版本，数据库不自动降级。备份包含敏感数据，目录权限 700、秘密文件 600，不上传 Git；保留足够磁盘并按现场保留策略整理成功备份。
 
-若本次更新包含 `agent/monitor_agent.py` 或 `agent/install_node.py`，应在开放网页部署功能前运行 `bash agent/build.sh`，将各目标架构的独立包与源码一起准备好。`setup.sh` 不自动构建 Agent 包，旧包不能通过当前源码哈希校验。节点防火墙出站规则和已有 Agent 重部署流程见 [Agent 说明](../agent/README.md#出站网络与目标机防火墙)。
+识别本项目 Nginx 时保持代理/WAF 运行，只停止后端，发布静态资源时保留旧哈希文件、最后替换首页。独立站点创建后端与 HTTPS preview 两个服务。缺失或无法连接原数据库时不会为已有服务创建替代容器或空库，先恢复原容器/端口/挂载。旧 nohup 入口会按监听 PID、启动时间、完整命令及项目工作目录核验，确认归属后 TERM/KILL 并限时等待；未知进程保留并提示，不能按名称全局杀进程或遇 D 状态继续覆盖。
+
+`--skip-deps` 复用现有依赖；`--no-start` 完成后保持停止；`--no-bootstrap` 适用于已准备运行时的离线环境。首次安装用 `--host` 指定证书中的 IPv4/域名；已有地址及证书不自动替换。首次运维口令交互输入，非交互时仅写入 `.runtime/initial-ops-password`（600）；亦可通过 `--ops-password-file` 输入受保护文件。已有摘要保持不变。
+
+新独立站点默认 HTTPS 3000，主机或上游防火墙限制访问时，应按现场管理网策略放行该入口；初始化不自动扩大管理网访问范围。下载依赖可用 `PIP_INDEX_URL` 指定可信镜像，例如南大镜像 `https://mirrors.nju.edu.cn/pypi/web/simple`；联网源不可用时安装失败并保留恢复记录，不忽略依赖错误。
+
+初始化默认构建或复用通过清单及源码哈希校验的本机架构独立 Agent 包，使用 Docker/manylinux。只做监控可显式 `--skip-agent-build`，随后再运行 `bash agent/build.sh`；不能在缺包时宣称网页部署可用。跨架构包需在对应 Linux 构建机准备。节点防火墙及重部署流程见 [Agent 说明](../agent/README.md#出站网络与目标机防火墙)。
 
 已有库不能重新导入 `monitor_db.sql`，也不需要执行单独的建索引 SQL；索引由 `scripts/initialize.py` 根据现有结构补齐。首次部署、独立 HTTPS 模式及环境要求见 [README](../README.md)。
 
@@ -103,12 +106,9 @@ python3 migrate_agent.py --require-ready
 
 使用 venv 时把 `python3` 换成 `.venv/bin/python`。`--check` 只打印状态，`--require-ready` 还会在缺结构时退出 2；两者都不修改数据库。检查项为：
 
-- `servers.collection_mode`
-- `agent_credentials`
-- `servers.ssh_password_encrypted`
-- `servers.email_alert_enabled`
+- `monitor_db.sql` 的全部业务表、字段及索引（包括历史复合索引）；检查不改类型、默认值或既有记录。
 
-确实缺失时，在备份及维护窗口内运行 `python3 migrate_agent.py`。该脚本幂等，不重建 `server_stats`，不重置节点 ID、已有采集方式或 Token。MySQL DDL 会隐式提交，部分失败后应排查并重跑，不能假定事务整体回滚。
+确实缺失时，在备份及维护窗口内运行 `python3 migrate_agent.py`。该脚本与初始化共用 `core/schema.py`，只补缺表/列/索引，不重建历史、不重置 ID、模式或 Token，也不收缩列或删除旧字段。缺失历史指标/时间的已有记录保持 NULL，不编造 0 或当前时间；已有数据缺少主键或无默认的身份字段时先明确失败，需从备份恢复，不能自动伪造。索引同名但定义冲突时保留原样并提示。MySQL DDL 会隐式提交，部分失败后应排查并重跑，不能假定事务整体回滚。
 
 ## 发布验证与恢复
 

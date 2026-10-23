@@ -80,7 +80,7 @@ sudo bash install-agent.sh --ip <节点IP> --port <SSH端口> --user <SSH用户>
 重部署保留节点 ID、分组和历史，即使旧版本仍显示健康也执行程序与凭据更新；不能用于新增节点或已经切回 SSH 的节点。只读检查保持 `--check-only`。安装器源码变化后，需先执行 `bash agent/build.sh` 构建与当前源码一致的独立包；网页不会使用不匹配的旧包。
 ### 上报入口与运行要求
 
-`192.168.1.0/24` 中的目标默认上报到 `https://192.168.1.24/api/agent/report`，其余目标默认使用 `https://114.212.165.149:59443/api/agent/report`。
+已有南京站点在未覆盖配置时，`192.168.1.0/24` 目标上报到 `https://192.168.1.24/api/agent/report`，其余使用 `https://114.212.165.149:59443/api/agent/report`。新独立站点由 `setup.sh --host <本站地址>` 将自己的入口及 CA 写入本地 `.runtime/site.json`，网页和命令行安装共同使用；可用环境变量或 `backend/.env` 中的 `AGENT_REPORT_URL` / `AGENT_CA_FILE` 覆盖。苏州入口为 `https://10.168.100.150:3000/api/agent/report`，不能沿用南京 CA。显式 `--url` / `--ca-file` 仍优先。
 两个入口均自动传输 `/etc/node-monitor/tls/ca.crt` 公钥证书，保留证书和 IP 校验；不会传输中心 CA 或服务器私钥。其他中心可通过 `--url` 指定：
 
 ```bash
