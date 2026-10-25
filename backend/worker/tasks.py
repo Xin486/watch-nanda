@@ -38,7 +38,11 @@ from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCr
 running_tasks = set()
 refresh_requests = set()
 tasks_lock = Lock()
+recovery_lock = Lock()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.hasHandlers():
+    logger.addHandler(logging.StreamHandler())
 scheduler = None
 # A rejected password is tried once per configuration, avoiding account lockout.
 rejected_credentials = {}
@@ -232,6 +236,7 @@ def send_email_wrapper(db, subject, content, recipient=None, is_test=False):
     if not target_recipient:
         return False, "未设置接收人邮箱"
 
+    server_conn = None
     try:
         msg = MIMEText(content, "plain", "utf-8")
         msg["Subject"] = subject
@@ -249,11 +254,24 @@ def send_email_wrapper(db, subject, content, recipient=None, is_test=False):
                 server_conn.starttls()
 
         server_conn.login(email_config.smtp_user, email_config.smtp_password)
-        server_conn.sendmail(email_config.from_address, recipients_list, msg.as_string())
-        server_conn.quit()
+        refused = server_conn.sendmail(email_config.from_address, recipients_list, msg.as_string())
+        # DATA acceptance is the delivery boundary. QUIT failure must not cause
+        # duplicate messages; partial recipient rejection must not look successful.
+        try:
+            server_conn.quit()
+        except Exception:
+            server_conn.close()
+        if refused:
+            return False, 'SMTP部分收件人被拒绝，请检查收件地址和服务器策略'
         return True, "发送成功"
     except Exception as e:
         return False, str(e)
+    finally:
+        if server_conn is not None:
+            try:
+                server_conn.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -270,19 +288,23 @@ def check_server_alerts():
         for server in db.query(Server).filter(Server.is_active == True, Server.collection_mode == 'agent').order_by(Server.id).with_for_update().all():
             effective, age = freshness(server, now)
             if effective == 'offline':
+                if server.offline_since is None:
+                    # A new outage must not inherit an undelivered recovery's
+                    # cooldown from the previous outage.
+                    server.last_alert_time = None
                 server.status = 'offline'
                 server.offline_since = server.offline_since or server.last_online
             elif effective == 'online' and server.last_alert_time and server.email_alert_enabled:
+                recoveries.append((server.id, server.hostname, server.last_alert_time))
+        for server in db.query(Server).filter(Server.is_active == True, Server.collection_mode == 'ssh',
+                Server.last_alert_time != None).all():
+            if freshness(server, now)[0] == 'online' and server.email_alert_enabled:
                 recoveries.append((server.id, server.hostname, server.last_alert_time))
         db.commit()
     if not alerts_enabled:
         return
     for sid, hostname, previous_alert in recoveries:
-        success, _ = send_node_email(sid, f'【恢复】服务器 {hostname} 已恢复上报', f'节点 {hostname} 已恢复指标上报。')
-        if success:
-            with SessionLocal() as db:
-                db.query(Server).filter(Server.id == sid, Server.last_alert_time == previous_alert).update({Server.last_alert_time: None})
-                db.commit()
+        send_recovery_email(sid, hostname, previous_alert)
     with SessionLocal() as db:
         config = db.query(AlertConfig).first()
         if not config or not config.enable_email_alert:
@@ -306,6 +328,7 @@ def check_server_alerts():
                 db.query(Server).filter(Server.id == sid, Server.status == "offline",
                     Server.offline_since == offline_since).update({Server.last_alert_time: now})
                 db.commit()
+            logger.info('Offline alert accepted by SMTP for node %s', sid)
         elif message != 'muted':
             logger.warning("Alert delivery failed for node %s: %s", sid, message)
 
@@ -318,6 +341,33 @@ def send_node_email(server_id, subject, content):
         if not node or not node.is_active or not node.email_alert_enabled or not config or not config.enable_email_alert:
             return False, 'muted'
     return send_email_wrapper(None, subject, content)
+
+
+def send_recovery_email(server_id, hostname, previous_alert):
+    # Collector and minute sweep can observe the same pending recovery.
+    if not recovery_lock.acquire(blocking=False):
+        return
+    try:
+        _send_recovery_email(server_id, hostname, previous_alert)
+    finally:
+        recovery_lock.release()
+
+
+def _send_recovery_email(server_id, hostname, previous_alert):
+    with SessionLocal() as db:
+        node = db.get(Server, server_id)
+        if not node or node.last_alert_time != previous_alert or freshness(node)[0] != 'online':
+            return
+    success, message = send_node_email(server_id, f'【恢复】服务器 {hostname} 已恢复上报',
+                                        f'节点 {hostname} 已恢复指标采集/上报。')
+    if success:
+        with SessionLocal() as db:
+            db.query(Server).filter(Server.id == server_id, Server.status == 'online',
+                Server.last_alert_time == previous_alert).update({Server.last_alert_time: None})
+            db.commit()
+        logger.info('Recovery notification accepted by SMTP for node %s', server_id)
+    elif message != 'muted':
+        logger.warning('Recovery delivery failed for node %s: %s', server_id, message)
 
 
 # ---------------------------------------------------------------------------
@@ -452,19 +502,17 @@ def _do_monitor_server(server_id):
                 return
             now = datetime.utcnow()
             if ok:
-                recovery = row.status == "offline" and bool(row.last_alert_time)
+                recovery = row.last_alert_time
                 row.status, row.last_online, row.offline_since = "online", now, None
-                row.last_alert_time = None
             else:
+                if row.status == 'online' and row.offline_since is None:
+                    row.last_alert_time = None
                 row.status = "offline"
                 row.offline_since = row.offline_since or now
             row.latest_status_data = data
             db.commit()
         if recovery:
-            success, message = send_node_email(server_id, f"【恢复】服务器 {config['hostname']} 已恢复上线",
-                f"节点 {config['hostname']} ({config['ip_address']}) 已恢复 SSH 连接。")
-            if not success and message != 'muted':
-                logger.warning("Recovery delivery failed for node %s: %s", server_id, message)
+            send_recovery_email(server_id, config['hostname'], recovery)
         if not ok:
             logger.warning("Collection failed for node %s in %.2fs: %s", server_id, time.monotonic() - started, error)
     except Exception:

@@ -127,6 +127,63 @@ class MonitorTests(unittest.TestCase):
             self.assertIsNone(points[0]['cpu']); self.assertIsNone(points[0]['gpu'])
             points=main.get_server_history(1,90,db)['data']; self.assertIsNone(points[0]['cpu'])
 
+    def test_failed_ssh_recovery_is_retried_by_sweep_without_erasing_alert(self):
+        with self.Session() as db:
+            db.add(AlertConfig(enable_email_alert=True))
+            row=db.get(Server,1);row.status='offline';row.last_alert_time=self.now
+            db.commit()
+        with patch.object(tasks,'collect_server_data',return_value=({},True,'')),patch.object(tasks,'send_email_wrapper',return_value=(False,'temporary SMTP failure')):
+            tasks._do_monitor_server(1)
+        with self.Session() as db:self.assertEqual(db.get(Server,1).last_alert_time,self.now)
+        with patch.object(tasks,'send_email_wrapper',return_value=(True,'')) as send:
+            tasks.check_server_alerts();tasks.check_server_alerts()
+            send.assert_called_once()
+        with self.Session() as db:self.assertIsNone(db.get(Server,1).last_alert_time)
+
+    def test_muted_global_recovery_waits_until_enabled(self):
+        with self.Session() as db:
+            db.add(AlertConfig(enable_email_alert=False));db.get(Server,1).last_alert_time=self.now;db.commit()
+        with patch.object(tasks,'collect_server_data',return_value=({},True,'')),patch.object(tasks,'send_email_wrapper') as send:
+            tasks._do_monitor_server(1);tasks.check_server_alerts();send.assert_not_called()
+        with self.Session() as db:
+            self.assertEqual(db.get(Server,1).last_alert_time,self.now)
+            db.query(AlertConfig).one().enable_email_alert=True;db.commit()
+        with patch.object(tasks,'send_email_wrapper',return_value=(True,'')) as send:
+            tasks.check_server_alerts();send.assert_called_once()
+
+    def test_new_outage_does_not_inherit_failed_recovery_cooldown(self):
+        with self.Session() as db:
+            db.add(AlertConfig(enable_email_alert=True,offline_threshold_minutes=1))
+            row=db.get(Server,1);row.last_alert_time=self.now;row.offline_since=None;db.commit()
+        with patch.object(tasks,'collect_server_data',return_value=({},False,'timeout')):
+            tasks._do_monitor_server(1)
+        with self.Session() as db:
+            row=db.get(Server,1);self.assertIsNone(row.last_alert_time)
+            row.offline_since=self.now-timedelta(minutes=2);db.commit()
+        with patch.object(tasks,'send_email_wrapper',return_value=(True,'')) as send:
+            tasks.check_server_alerts();send.assert_called_once()
+
+    def test_smtp_acceptance_survives_quit_disconnect_and_partial_refusal_is_not_success(self):
+        from unittest.mock import Mock
+        with self.Session() as db:
+            db.add(EmailConfig(smtp_server='smtp.test',smtp_port=465,smtp_user='test',smtp_password='fake',from_address='test@example.invalid'))
+            db.add(AlertConfig(alert_recipient='dest@example.invalid'));db.commit()
+        smtp=Mock();smtp.sendmail.return_value={};smtp.quit.side_effect=OSError('disconnect after acceptance')
+        with patch.object(tasks.smtplib,'SMTP_SSL',return_value=smtp):
+            self.assertTrue(tasks.send_email_wrapper(None,'test','body')[0])
+            smtp.sendmail.return_value={'dest@example.invalid':(550,b'refused')}
+            self.assertFalse(tasks.send_email_wrapper(None,'test','body')[0])
+
+    def test_offline_threshold_daily_suppression_and_failure_retry(self):
+        with self.Session() as db:
+            db.add(AlertConfig(enable_email_alert=True,offline_threshold_minutes=30))
+            row=db.get(Server,1);row.status='offline';row.offline_since=self.now-timedelta(minutes=31);db.commit()
+        with patch.object(tasks,'send_email_wrapper',return_value=(False,'temporary failure')) as send:
+            tasks.check_server_alerts();send.assert_called_once()
+        with self.Session() as db:self.assertIsNone(db.get(Server,1).last_alert_time)
+        with patch.object(tasks,'send_email_wrapper',return_value=(True,'')) as send:
+            tasks.check_server_alerts();tasks.check_server_alerts();send.assert_called_once()
+
     def test_stale_offline_does_not_send_node_alert(self):
         with self.Session() as db:
             db.add(AlertConfig(enable_email_alert=True,offline_threshold_minutes=1))
