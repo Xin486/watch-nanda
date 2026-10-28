@@ -56,6 +56,8 @@ Hermes 属于可选独立服务，不由 `setup.sh` 或监控调度器启动。`
 
 SSH 连接仍严格核验主机指纹。`NodeConnectionPanel.vue` 共用原/新指纹确认弹窗，`useNodeAccess.js` 在明确确认后保存并继续原 SSH 测试或终端；取消、地址变化和退出登录不会替换信任。`core/operations.py` 的受认证 `trust-host` 重新握手并核对旧指纹及目标地址，只更新对应端点，备份原 known_hosts 后原子写入。批量部署的未知或变化指纹均进入等待核验状态，由用户明确确认再重试，不自动覆盖或继续尝试密码。
 
+部署进度由 `core/deployment_stream.py` 提供受运维认证保护的 SSE，单任务 `/api/ops/jobs/:id/stream`、批次 `/api/ops/agent-batches/:id/stream` 共用只读快照流。内存状态每 0.5 秒检查变化，未变化每 10 秒心跳；不访问 SSH、不创建任务。前端 `utils/deploymentFeed.js` 管理重连、每 5 秒 HTTP 兜底和旧响应保护，`DeploymentLog.vue` 共用日志跟随/暂停、连接状态和更新时间。批次默认只发送当前节点日志，也可用 `log_node` 指定一台；`/:id/snapshot` 提供相同结构用于兜底。流持续复核会话，任务结束、登出或页面卸载关闭；服务重启丢失任务时明确报错，不自动重新安装。开始/重试/停止仍使用原操作接口。
+
 ## 数据模型与关键口径
 
 - `servers`：节点身份、分组、启用状态、采集方式、加密 SSH 密码、提醒开关、实时 JSON 缓存与状态/告警时间。

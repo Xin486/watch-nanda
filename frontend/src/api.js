@@ -25,6 +25,7 @@ export const api = {
   agentBatches: () => http.get('/api/ops/agent-batches'),
   agentBatch: (id, options = {}) => http.get('/api/ops/agent-batches/'+id, options),
   agentBatchNode: (batch, node) => http.get('/api/ops/agent-batches/'+batch+'/nodes/'+node),
+  agentBatchSnapshot: (id, node, options = {}) => http.get('/api/ops/agent-batches/'+id+'/snapshot', { ...options, params: node ? { log_node: node } : {} }),
   createAgentBatch: serverIds => http.post('/api/ops/agent-batches', { server_ids: serverIds }),
   retryAgentBatchNode: (batch, node, data = {}) => http.post('/api/ops/agent-batches/'+batch+'/nodes/'+node+'/retry', data),
   retryAgentBatchWaiting: id => http.post('/api/ops/agent-batches/'+id+'/retry-waiting'),
@@ -38,7 +39,7 @@ export const api = {
   trustHost: (id, fingerprint, confirmation = {}) => http.post(`/api/ops/nodes/${id}/trust-host`, { fingerprint, ...confirmation }, { timeout: 30000 }),
   deployAgent: (id, data) => http.post(`/api/ops/nodes/${id}/deploy`, data, { timeout: 45000 }),
   redeployAgent: (id, data) => http.post(`/api/ops/nodes/${id}/redeploy`, data, { timeout: 45000 }),
-  deploymentJob: (id) => http.get(`/api/ops/jobs/${id}`),
+  deploymentJob: (id, options = {}) => http.get(`/api/ops/jobs/${id}`, options),
   deploymentJobs: (serverId) => http.get('/api/ops/jobs', { params: { server_id: serverId } }),
 
   /** 彻底删除节点及其全部历史数据 */

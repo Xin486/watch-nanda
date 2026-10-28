@@ -4,11 +4,11 @@ from threading import Lock, Thread
 import time
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 import paramiko
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from core import operations as ops, ssh_profiles
+from core import operations as ops, ssh_profiles, deployment_stream
 from models.database import SessionLocal
 from models.models import Server
 
@@ -287,6 +287,38 @@ def get_item(batch_id: str, server_id: int):
             if job:
                 result['logs'] = list(job['logs'])
     return result
+
+
+def live_snapshot(batch_id, log_node=None):
+    # Consistent snapshot, same lock order used by the coordinator. Only the
+    # selected node (or current running node) has logs included, never all logs.
+    with lock, ops.guard:
+        batch = find(batch_id)
+        result = payload(batch)
+        item = next((row for row in batch['items'] if row['server_id'] == log_node), None) if log_node else next(
+            (row for row in batch['items'] if row['status'] == 'running'), None)
+        if not item and not log_node:
+            item = max((row for row in reversed(batch['items']) if row['job_id']),
+                       key=lambda row: ops.jobs.get(row['job_id'], {}).get('created_at', 0), default=None)
+        if log_node and item is None:
+            raise HTTPException(404, '节点不在此批次中')
+        live_log = None
+        if item:
+            job = ops.jobs.get(item['job_id']) if item['status'] == 'running' else None
+            live_log = {'server_id': item['server_id'], 'job_id': item['job_id'],
+                        'hostname': item['hostname'], 'logs': list(job['logs'] if job else item['logs'])}
+        return {'batch': result, 'live_log': live_log}
+
+
+@router.get('/{batch_id}/snapshot')
+def batch_snapshot(batch_id: str, log_node: int | None = Query(default=None, gt=0)):
+    return live_snapshot(batch_id, log_node)
+
+
+@router.get('/{batch_id}/stream')
+async def stream_batch(batch_id: str, request: Request, log_node: int | None = Query(default=None, gt=0)):
+    return await deployment_stream.response(request, lambda: live_snapshot(batch_id, log_node),
+        lambda data: data['batch']['status'] in ('finished', 'cancelled'))
 
 
 @router.post('/{batch_id}/nodes/{server_id}/retry')

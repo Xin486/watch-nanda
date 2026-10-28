@@ -21,7 +21,7 @@ import paramiko
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from core import ops_auth
+from core import ops_auth, deployment_stream
 from core.ssh_credentials import decrypt_password, encrypt_password
 from core.status import freshness
 from models.database import SessionLocal
@@ -440,6 +440,12 @@ def get_job(job_id: str):
         if not job:
             raise HTTPException(404, '任务不存在或服务已重新启动，请核验远端状态')
         return job_payload(job)
+
+
+@router.get('/jobs/{job_id}/stream', dependencies=[Depends(require_operator)])
+async def stream_job(job_id: str, request: Request):
+    return await deployment_stream.response(request, lambda: get_job(job_id),
+                                            lambda data: data['status'] != 'running')
 
 
 @router.websocket('/nodes/{server_id}/terminal')

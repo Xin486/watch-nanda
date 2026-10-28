@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
 import { eligibleAgents, parseBatchIds, selectedAgents } from '../src/utils/batchSelection.js'
+import { createDeploymentFeed } from '../src/utils/deploymentFeed.js'
 
 const nodes = [{ id: 1, hostname: 'one', collection_mode: 'agent' }, { id: 2, hostname: 'two', collection_mode: 'agent' }, { id: 3, hostname: 'ssh', collection_mode: 'ssh' }]
 const flush = async () => { await nextTick(); await Promise.resolve(); await nextTick() }
@@ -13,11 +14,19 @@ test('automatic and manual selections contain only existing Agent nodes', () => 
   assert.deepEqual(parseBatchIds('1,1,0,-3,no,2,1.5,9007199254740992'), [1,2])
 })
 function harness(overrides = {}) {
-  const calls = [], unmounts = [], timers = [], route = reactive({ query: { nodes: '1,2,3,999' } })
+  const calls = [], unmounts = [], timers = [], streams = [], route = reactive({ query: { nodes: '1,2,3,999' } })
+  class Source {
+    listeners = {}; closed = false
+    constructor(url) { this.url = url; streams.push(this) }
+    addEventListener(name, fn) { this.listeners[name] = fn }
+    emit(name, data) { this.listeners[name]({ data: JSON.stringify(data) }) }
+    close() { this.closed = true }
+  }
   const access = reactive({ authenticated: true, error: '', handleError(e) { this.error = e.response?.data?.detail || 'failed'; if (e.response?.status === 401) this.authenticated = false } })
   const snapshot = { id: 'batch-one', total: 2, status: 'running', counts: { queued: 2 }, items: [{ server_id: 1, username: 'root', status: 'needs_credentials' }, { server_id: 2, username: 'root', status: 'queued' }] }
   const context = {
     computed, reactive, ref, watch, AbortController, parseBatchIds, selectedAgents,
+    createDeploymentFeed: options => createDeploymentFeed({ ...options, EventSourceImpl: Source, every: fn => { timers.push(fn); return timers.length }, cancel() {} }),
     useRoute: () => route, useRouter: () => ({ replace(target) { calls.push(['route', target]) } }),
     useOperatorSession: () => access, useServers: () => ({ servers: ref(nodes), subscribe() {} }),
     onMounted() {}, onBeforeUnmount: fn => unmounts.push(fn),
@@ -27,6 +36,7 @@ function harness(overrides = {}) {
       agentBatches: async () => ({ data: [] }),
       createAgentBatch: async ids => { calls.push(['create', [...ids]]); return { data: snapshot } },
       agentBatch: async () => ({ data: snapshot }),
+      agentBatchSnapshot: async (id, node, options) => { const { data } = await context.api.agentBatch(id, options); return { data: { batch: data, live_log: null } } },
       retryAgentBatchNode: async (batch, node, body) => { calls.push(['retry', batch, node, { ...body }]); return { data: snapshot } },
       stopAgentBatch: async id => { calls.push(['stop', id]); return { data: { ...snapshot, status: 'cancelled', cancelled: true } } },
       trustHost: async (id, fingerprint) => calls.push(['trust', id, fingerprint]), ...overrides,
@@ -36,8 +46,8 @@ function harness(overrides = {}) {
   const source = readFileSync(new URL('../src/views/AgentBatchDeploy.vue', import.meta.url), 'utf8')
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
-  scope.run(() => vm.runInContext(script + '\nthis.h = { start, refresh, inputFor, retry, submitManual, stop, batch, busy, credentials, confirmed, openBatch }', context))
-  return { ...context.h, calls, access, route, snapshot, cleanup() { unmounts.forEach(fn => fn()); scope.stop() } }
+  scope.run(() => vm.runInContext(script + '\nthis.h = { start, refresh, inputFor, retry, submitManual, stop, batch, busy, credentials, confirmed, openBatch, liveLog, loadLogs, followRunning, feedState }', context))
+  return { ...context.h, calls, access, route, snapshot, streams, cleanup() { unmounts.forEach(fn => fn()); scope.stop() } }
 }
 test('opening the batch page never starts deployment; explicit start filters stale and SSH selections', async () => {
   const h = harness()
@@ -105,5 +115,26 @@ test('a late running poll cannot replace a stopped batch', async () => {
     const pending = h.refresh(); await h.stop()
     resolve({ data: h.snapshot }); await pending
     assert.equal(h.batch.value.status, 'cancelled')
+  } finally { h.cleanup() }
+})
+
+test('batch pushes update active logs and waiting states; switching log node closes the old feed', async () => {
+  const h = harness()
+  try {
+    await flush(); await h.start()
+    const source = h.streams.at(-1)
+    const updated = { ...h.snapshot, status: 'waiting_input', items: [{ server_id: 1, status: 'needs_credentials', username: 'root' }, { server_id: 2, status: 'success' }] }
+    source.emit('snapshot', { batch: updated, live_log: { server_id: 2, logs: ['ready'] } })
+    assert.equal(h.batch.value.status, 'waiting_input'); assert.equal(h.liveLog.value.logs[0], 'ready')
+    h.inputFor(updated.items[0]); h.credentials.password = 'editing-secret'
+    source.emit('snapshot', { batch: updated, live_log: { server_id: 2, logs: ['more'] } })
+    assert.equal(h.credentials.password, 'editing-secret')
+    h.loadLogs(updated.items[0]); assert.equal(source.closed, true)
+    assert.match(h.streams.at(-1).url, /log_node=1/)
+    source.emit('snapshot', { batch: { ...updated, status: 'running' }, live_log: null })
+    assert.equal(h.batch.value.status, 'waiting_input')
+    h.followRunning(); assert.doesNotMatch(h.streams.at(-1).url, /log_node/)
+    h.access.authenticated = false; await flush()
+    assert.equal(h.streams.at(-1).closed, true); assert.equal(h.credentials.password, '')
   } finally { h.cleanup() }
 })

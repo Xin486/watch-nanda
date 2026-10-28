@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import { computed, effectScope, nextTick, reactive, ref, watch } from 'vue'
+import { createDeploymentFeed } from '../src/utils/deploymentFeed.js'
+
+class FeedSource { addEventListener() {} close() {} }
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const changedKey = { ok:false, code:'host_key_changed', fingerprint:'SHA256:new-key', previous_fingerprint:'SHA256:old-key', host:'192.0.2.7', port:10022 }
@@ -207,6 +210,7 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
   })
   const context = {
     computed, ref, watch, onBeforeUnmount: fn => unmounts.push(fn),
+    createDeploymentFeed: options => createDeploymentFeed({ ...options, EventSourceImpl: FeedSource, every: fn => { timers.push(fn); return fn }, cancel() {} }),
     defineProps: () => ({ redeploy: false }),
     useNodeAccess: () => access,
     setInterval: fn => { timers.push(fn); return fn }, clearInterval() {},
@@ -220,7 +224,7 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
   vm.createContext(context)
   const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
-  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,pollJob}', context))
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,refreshFeed: () => feed?.refresh()}', context))
   try {
     await nextTick()
     await context.exposed.deploy()
@@ -228,7 +232,7 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
     assert.equal(access.credentials.password, '')
     assert.equal(context.exposed.job.value.status, 'running')
     assert.equal(timers.length, 1)
-    await context.exposed.pollJob()
+    await context.exposed.refreshFeed()
     assert.equal(context.exposed.job.value.status, 'success')
     assert.equal(context.exposed.job.value.logs[0], 'Agent ready')
     await context.exposed.deploy()
@@ -244,6 +248,7 @@ test('redeployment is explicit, uses the existing Agent ID and ignores old deplo
   })
   const context = {
     computed, ref, watch, defineProps: () => ({ redeploy: true }), onBeforeUnmount: fn => unmounts.push(fn),
+    createDeploymentFeed: options => createDeploymentFeed({ ...options, EventSourceImpl: FeedSource, every: () => 1, cancel() {} }),
     useNodeAccess: options => { assert.equal(options.selectable, false); return access },
     setInterval: () => 1, clearInterval() {}, window: { dispatchEvent() {} }, CustomEvent: class {},
     api: {
@@ -256,7 +261,7 @@ test('redeployment is explicit, uses the existing Agent ID and ignores old deplo
   vm.createContext(context)
   const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
-  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,pollJob}', context))
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,refreshFeed: () => feed?.refresh()}', context))
   try {
     await nextTick()
     assert.deepEqual(calls, [])
@@ -264,7 +269,7 @@ test('redeployment is explicit, uses the existing Agent ID and ignores old deplo
     await context.exposed.deploy()
     assert.deepEqual(calls, ['ssh', 'redeploy'])
     assert.equal(access.credentials.password, '')
-    await context.exposed.pollJob()
+    await context.exposed.refreshFeed()
     assert.equal(context.exposed.job.value.status, 'success')
     access.node.collection_mode = 'ssh'
     await nextTick()
