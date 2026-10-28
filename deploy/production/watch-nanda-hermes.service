@@ -1,0 +1,22 @@
+[Unit]
+Description=Watch Nanda Hermes chat bridge
+After=network-online.target watch-nanda-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=test
+Group=test
+WorkingDirectory=/data2/hermes-cli/web-bridge
+Environment=HERMES_CLI=/data2/hermes-cli/hermes
+Environment=HERMES_CHAT_WORKSPACE=/data2/hermes-cli/workspace
+Environment=HERMES_CHAT_TURN_TIMEOUT_SECONDS=1800
+ExecStart=/usr/bin/python3 -m uvicorn hermes_bridge:app --host 127.0.0.1 --port 7981 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log --no-server-header
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

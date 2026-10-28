@@ -47,9 +47,12 @@ REST 和 SSE 都调用 `core/status.py`。前端 `useServers` 处理共享 SSE �
 | 新节点 Agent 部署 | `AgentDeploy.vue`、连接/运维布局组件 | 部署任务 → `agent_job.py` → `scripts/install_agent.py` → `agent/install_node.py` |
 | 已有 Agent 重部署 | `AgentHealthPanel.vue` 常驻入口 → `AgentRedeploy.vue`（复用部署界面） | 受认证 redeploy API、Agent 模式检查、既有安装器和失败回滚 |
 | 管理页主题与图表配色 | `useTheme.js`、`utils/theme.js`、`styles/theme.css` | 不改变采集和数据接口 |
+| 全站 Hermes 悬浮对话 | `HermesChat.vue`、`utils/hermesChat.js` | 独立 `hermes_bridge.py` + `hermes_worker.py`，回环 7981；通过主后端核验运维 Cookie，官方网关 JSONL 与 session resume |
 | 初始化、启停与部署归属检查 | 根目录 Shell 入口 | `scripts/initialize.py`、`scripts/lifecycle.py`、`deploy/production/` |
 
 前端源码路径均相对 `frontend/src/`，后端路径相对 `backend/`。仓库目录图见 [README](../README.md#目录结构)。初始化由 `scripts/setup_project.py` 编排；`bootstrap.py` 准备兼容运行时，`setup_security.py` 初始化本站 HTTPS 与运维认证，`core/schema.py` 按受审阅的 SQL 补齐缺表、字段及索引。
+
+Hermes 属于可选独立服务，不由 `setup.sh` 或监控调度器启动。`/api/ops/hermes/` 由同源代理转发回环 7981，聊天服务每次请求向现有 7980 的 `/api/ops/session` 校验 Cookie，并在生成期间每约 2 秒复核。对话按运维会话摘要隔离，前端仅在 sessionStorage 保留不透明对话 ID；服务内存丢失后提示新建，Hermes 原生历史仍在它自己的目录。生成中的文本通过 800 毫秒只读快照呈现，不重试提交；后台全局最多 2 个生成、同登录会话最多 1 个，默认 30 分钟超时（可配置 1–60 分钟），收起浮窗只隐藏界面且显示后台执行/完成提示。停止/失效/停服显式中断并关闭网关任务，另通过控制子进程确认清理；结果未确认时明确报错，不能只杀普通 CLI 客户端。工具以 `test` 用户权限执行；不授予 root、不自动注入监控数据或节点凭据。详见 [Hermes 接入说明](HERMES_CHAT.md)。
 
 SSH 连接仍严格核验主机指纹。`NodeConnectionPanel.vue` 共用原/新指纹确认弹窗，`useNodeAccess.js` 在明确确认后保存并继续原 SSH 测试或终端；取消、地址变化和退出登录不会替换信任。`core/operations.py` 的受认证 `trust-host` 重新握手并核对旧指纹及目标地址，只更新对应端点，备份原 known_hosts 后原子写入。批量部署的未知或变化指纹均进入等待核验状态，由用户明确确认再重试，不自动覆盖或继续尝试密码。
 

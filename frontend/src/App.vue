@@ -53,6 +53,7 @@
     </main>
 
     <AddServerModal v-if="showAddModal" :groups="allGroups" @close="showAddModal = false" @created="onServerCreated" />
+    <HermesChat />
     <div v-if="addNotice" class="add-node-success" role="status"><span aria-hidden="true">✓</span>{{ addNotice }}</div>
   </div>
 </template>
@@ -62,6 +63,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AddServerModal from './components/AddServerModal.vue'
+import HermesChat from './components/HermesChat.vue'
 import NavIcon from './components/NavIcon.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import { useServers } from './composables/useServers'

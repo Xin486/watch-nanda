@@ -40,6 +40,8 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 
 ## 配置来源
 
+可选的全站 Hermes 悬浮对话使用独立 `watch-nanda-hermes.service` 和回环 7981，沿用 `/api/ops` 的运维认证，不重启监控后端；南京仅在现有 18080 origin 加专用 location。安装、权限、验证及回退见 [Hermes 接入说明](HERMES_CHAT.md)。整套 setup 暂不管理该可选服务，升级前后需保留现场聊天代理。
+
 | 配置 | 当前来源与用途 |
 | --- | --- |
 | 后端服务 | `scripts/lifecycle.py` 按仓库位置、venv 和运行账户生成 `watch-nanda-backend.service`；不维护另一份静态服务模板 |

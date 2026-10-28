@@ -7,7 +7,10 @@ export default defineConfig(({ command }) => {
     cert: readFileSync(process.env.WATCH_NANDA_TLS_CERT || '/etc/node-monitor/tls/server.crt'),
     key: readFileSync(process.env.WATCH_NANDA_TLS_KEY || '/etc/node-monitor/tls/server.key'),
   } : undefined
-  const proxy = { '/api': { target: 'http://127.0.0.1:7980', ws: true, headers: { 'X-Forwarded-Proto': 'https' } } }
+  const proxy = {
+    '/api/ops/hermes': { target: 'http://127.0.0.1:7981', headers: { 'X-Forwarded-Proto': 'https' } },
+    '/api': { target: 'http://127.0.0.1:7980', ws: true, headers: { 'X-Forwarded-Proto': 'https' } },
+  }
   return {
   plugins: [vue()],
   server: {
