@@ -8,6 +8,8 @@
         <button class="hermes-icon" title="收起对话，任务继续执行" aria-label="收起对话，任务继续执行" @click="close">×</button>
       </header>
 
+      <p v-if="shortcutNotice" class="hermes-shortcut-notice" role="status">{{ shortcutNotice }}</p>
+
       <div v-if="!access.secure" class="hermes-welcome"><h3>请通过 HTTPS 访问</h3><p>安全连接后即可使用 Hermes。</p></div>
       <form v-else-if="!access.authenticated" class="hermes-login" @submit.prevent="login">
         <span class="hermes-eyebrow">YOUR WORKSPACE ASSISTANT</span>
@@ -52,19 +54,21 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { useOperatorSession } from '../composables/useOperatorSession'
 import { createHermesChat, hermesBackgroundNotice } from '../utils/hermesChat'
+import { appendHermesNode, copyHermesNode, hermesNodeShortcutEvent } from '../utils/hermesNodeShortcut'
 
 const key = 'watch-nanda-hermes-conversation'
 const access = useOperatorSession()
 const open = ref(false), busy = ref(false), draft = ref('')
 const backgroundNotice = ref('')
+const shortcutNotice = ref('')
 const composer = ref(null), launcher = ref(null), transcript = ref(null)
 const chat = ref({ id: '', messages: [], status: 'idle', error: '', activity: '' })
 const suggestions = ['你能帮我做哪些事情？', '服务器负载过高，该如何排查？']
-let follow = true, mounted = true, restored = false
+let follow = true, mounted = true, restored = false, opening, shortcutGeneration = 0, shortcutOwner = 0
 function storage(value) { try { if (value) sessionStorage.setItem(key, value); else sessionStorage.removeItem(key) } catch {} }
 const client = createHermesChat({ changed(value) {
   if (!mounted) return
@@ -80,14 +84,41 @@ async function restore() {
   restored = true
   try { await client.restore(sessionStorage.getItem(key)) } catch {}
 }
-async function toggle() {
-  if (open.value) return close()
+async function showPanel() {
+  if (open.value && !opening) return
   open.value = true
   backgroundNotice.value = ''
-  try { await api.opsSession(); if (mounted) access.authenticated = true } catch (e) { if (mounted) access.handleError(e) }
-  if (!mounted || !open.value) return
-  if (access.authenticated) { await restore(); client.setActive(true) }
-  nextTick(() => composer.value?.focus())
+  if (opening) return opening
+  const owner = shortcutOwner
+  opening = (async () => {
+    try { await api.opsSession(); if (mounted && owner === shortcutOwner) access.authenticated = true } catch (e) { if (mounted && owner === shortcutOwner) access.handleError(e) }
+    if (!mounted || !open.value || owner !== shortcutOwner) return
+    if (access.authenticated) { await restore(); client.setActive(true) }
+    await nextTick()
+    composer.value?.focus()
+  })()
+  try { await opening } finally { opening = undefined }
+}
+function toggle() { return open.value ? close() : showPanel() }
+async function onNodeShortcut(event) {
+  if (typeof event.detail !== 'string' || !event.detail.trim()) return
+  const hostname = event.detail.trim(), current = ++shortcutGeneration, owner = shortcutOwner
+  // Start clipboard access during the click, before awaiting authentication.
+  const copying = copyHermesNode(hostname)
+  await showPanel()
+  if (!mounted || owner !== shortcutOwner) return
+  const next = appendHermesNode(draft.value, hostname)
+  if (next !== null) draft.value = next
+  await nextTick()
+  if (open.value) {
+    composer.value?.focus()
+    composer.value?.setSelectionRange(draft.value.length, draft.value.length)
+  }
+  const copied = await copying
+  if (!mounted || current !== shortcutGeneration) return
+  shortcutNotice.value = next === null
+    ? (copied ? '节点名已复制；输入框已满，请整理后粘贴。' : '输入框已满，且剪贴板复制失败，请整理后重试。')
+    : (copied ? '节点名已复制并填入，补充任务后发送。' : '节点名已填入；浏览器未允许复制到剪贴板。')
 }
 function close() {
   open.value = false; access.password = ''
@@ -98,15 +129,16 @@ async function login() { await access.login(); if (access.authenticated && mount
 async function send(text = draft.value) {
   if (busy.value || !text.trim() || chat.value.status === 'running') return
   busy.value = true; follow = true
-  try { await client.send(text); if (chat.value.messages.at(-2)?.text === text.trim()) draft.value = '' }
+  try { await client.send(text); if (draft.value === text && chat.value.messages.at(-2)?.text === text.trim()) { draft.value = ''; shortcutNotice.value = '' } }
   finally { busy.value = false }
 }
 async function stop() { busy.value = true; try { await client.stop() } finally { busy.value = false } }
 async function reset() { busy.value = true; try { await client.reset(); follow = true } finally { busy.value = false } }
-async function logout() { client.clear(); draft.value = ''; restored = true; await access.logout() }
+async function logout() { shortcutOwner++; shortcutGeneration++; shortcutNotice.value = ''; client.clear(); draft.value = ''; restored = true; await access.logout() }
 function onEnter(event) { if (!event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
 watch(() => access.authenticated, value => { if (!value) { client.clear(); draft.value = ''; restored = false } })
-onBeforeUnmount(() => { mounted = false; client.dispose(); access.password = '' })
+onMounted(() => window.addEventListener(hermesNodeShortcutEvent, onNodeShortcut))
+onBeforeUnmount(() => { mounted = false; window.removeEventListener(hermesNodeShortcutEvent, onNodeShortcut); client.dispose(); access.password = '' })
 </script>
 
 <style scoped>
@@ -121,6 +153,7 @@ onBeforeUnmount(() => { mounted = false; client.dispose(); access.password = '' 
 .hermes-background-notice:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
 .hermes-panel { position:fixed; right:24px; bottom:92px; z-index:850; display:flex; flex-direction:column; width:min(420px,calc(100vw - 32px)); height:min(640px,calc(100dvh - 116px)); min-height:240px; border:1px solid var(--border); border-radius:20px; color:var(--text); background:var(--surface); box-shadow:var(--shadow-modal); overflow:hidden; font:14px/1.6 system-ui,-apple-system,"Microsoft YaHei",sans-serif; }
 .hermes-panel * { box-sizing:border-box; }
+.hermes-shortcut-notice { flex-shrink:0; margin:0; padding:8px 18px; border-bottom:1px solid var(--border-soft); background:var(--accent-soft); color:var(--accent); font-size:12px; line-height:1.6; }
 .hermes-panel button,.hermes-panel input,.hermes-panel textarea { font:inherit; }
 .hermes-panel button { cursor:pointer; }
 .hermes-panel button:disabled { cursor:not-allowed; opacity:.5; }
