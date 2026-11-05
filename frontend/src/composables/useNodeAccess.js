@@ -119,7 +119,7 @@ export function useNodeAccess({ selectable = true, activity = ref(false) } = {})
     error.value = ''
     const current = authGeneration
     try {
-      await api.opsLogin(operatorPassword.value)
+      await api.opsSession()
       if (disposed || current !== authGeneration) return
       authenticated.value = true
       await maybeAutoCheck()

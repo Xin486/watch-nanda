@@ -33,7 +33,6 @@ export const api = {
   agentHealth: (id, options = {}) => http.get(`/api/server/${id}/agent-health`, options),
   setNodeNotifications: (id, enabled) => http.post(`/api/server/${id}/notifications`, { enabled }),
   opsSession: () => http.get('/api/ops/session'),
-  opsLogin: (password) => http.post('/api/ops/login', { password }),
   opsLogout: () => http.post('/api/ops/logout'),
   sshTest: (id, data) => http.post(`/api/ops/nodes/${id}/ssh-test`, data, { timeout: 45000 }),
   trustHost: (id, fingerprint, confirmation = {}) => http.post(`/api/ops/nodes/${id}/trust-host`, { fingerprint, ...confirmation }, { timeout: 30000 }),

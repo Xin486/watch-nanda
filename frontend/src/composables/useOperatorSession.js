@@ -14,7 +14,7 @@ export function useOperatorSession() {
     const current = ++generation
     busy.value = true; error.value = ''
     try {
-      await api.opsLogin(password.value)
+      await api.opsSession()
       if (!disposed && current === generation) authenticated.value = true
     } catch (e) { if (!disposed && current === generation) handleError(e) }
     finally { password.value = ''; if (!disposed) busy.value = false }
@@ -23,12 +23,7 @@ export function useOperatorSession() {
     generation++; authenticated.value = false; password.value = ''; error.value = ''
     try { await api.opsLogout() } catch (e) { if (!disposed) handleError(e) }
   }
-  onMounted(async () => {
-    if (!secure) return
-    const current = generation
-    try { await api.opsSession(); if (!disposed && current === generation) authenticated.value = true }
-    catch (e) { if (!disposed && e.response?.status !== 401) handleError(e) }
-  })
+  onMounted(login)
   onBeforeUnmount(() => { disposed = true; generation++; password.value = '' })
   return reactive({ secure, authenticated, password, busy, error, login, logout, handleError })
 }

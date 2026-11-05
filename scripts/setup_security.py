@@ -126,7 +126,8 @@ def main():
     tls(os.environ['WATCH_NANDA_HTTPS_HOST'])
     from manage_ssh import initialize_key
     initialize_key()
-    operator(args.ops_password_file)
+    # Operator access now uses automatic browser sessions. Preserve any legacy
+    # password files but do not prompt for, read or generate an operator secret.
 
 
 if __name__ == '__main__':

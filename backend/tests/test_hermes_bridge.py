@@ -47,6 +47,13 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers['X-Forwarded-Proto'], 'https')
         self.assertEqual(headers['Host'], 'monitor.example')
 
+    async def test_bridge_uses_validation_only_not_automatic_session_creation(self):
+        with patch.object(module.http.client, 'HTTPConnection') as factory:
+            factory.return_value.getresponse.return_value.status = 200
+            module.verify_session({'Cookie': 'watch_nanda_ops=opaque'})
+            factory.return_value.request.assert_called_once_with('GET', '/api/ops/session?validate_only=true',
+                headers={'Cookie': 'watch_nanda_ops=opaque'})
+
 
 class IsolationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

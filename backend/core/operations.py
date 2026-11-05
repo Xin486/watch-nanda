@@ -38,10 +38,6 @@ terminals = set()
 workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix='agent-deploy')
 
 
-class Login(BaseModel):
-    password: SecretStr
-
-
 class Connection(BaseModel):
     model_config = ConfigDict(extra='forbid')
     use_saved: bool = True
@@ -133,19 +129,20 @@ def require_operator(request: Request):
 
 
 @router.post('/login')
-async def login(data: Login, request: Request, response: Response):
-    ops_auth.secure(request)
-    address = request.client.host if request.client else 'unknown'
-    token = await asyncio.to_thread(ops_auth.verify_login, data.password.get_secret_value(), address)
-    response.set_cookie(ops_auth.COOKIE, token, max_age=ops_auth.TTL, secure=True, httponly=True, samesite='strict', path='/api/ops')
-    response.headers['Cache-Control'] = 'no-store'
-    return {'authenticated': True, 'expires_in': ops_auth.TTL}
+def login(request: Request, response: Response):
+    # Compatibility for previously cached pages; no password is read or checked.
+    return session(request, response)
 
 
 @router.get('/session')
-def session(request: Request):
-    ops_auth.authorized(request)
-    return {'authenticated': True}
+def session(request: Request, response: Response, validate_only: bool = False):
+    if validate_only:
+        ops_auth.authorized(request)
+    else:
+        token = ops_auth.browser_session(request)
+        response.set_cookie(ops_auth.COOKIE, token, max_age=ops_auth.TTL, secure=True, httponly=True, samesite='strict', path='/api/ops')
+    response.headers['Cache-Control'] = 'no-store'
+    return {'authenticated': True, 'login_required': False}
 
 
 @router.post('/logout')

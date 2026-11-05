@@ -135,7 +135,6 @@ class OperationsTests(unittest.TestCase):
         self.ops_db = patch.object(ops,'SessionLocal',self.Session);self.ops_db.start()
         self.startup_patches=[patch.object(main,'start_scheduler'),patch.object(main,'stop_scheduler'),patch.object(main,'monitor_once')]
         for mocked in self.startup_patches:mocked.start()
-        ops_auth.set_password('test-operator-password')
         ops_auth.sessions.clear();ops_auth.attempts.clear()
         ops.jobs.clear();ops.active_jobs.clear();ops.terminals.clear()
         tasks.refresh_requests.clear();tasks.rejected_credentials.clear()
@@ -150,7 +149,7 @@ class OperationsTests(unittest.TestCase):
         test_monitor.MonitorTests.tearDown(self)
 
     def login(self,client):
-        response=client.post('/api/ops/login',json={'password':'test-operator-password'},headers={'origin':'https://testserver'})
+        response=client.get('/api/ops/session',headers={'origin':'https://testserver'})
         self.assertEqual(response.status_code,200,response.text)
         self.assertIn('httponly',response.headers['set-cookie'].lower())
         self.assertIn('secure',response.headers['set-cookie'].lower())
@@ -183,18 +182,34 @@ class OperationsTests(unittest.TestCase):
                 self.assertEqual(db.get(AgentCredential,1).token_hash,'old-agent-token-digest')
                 self.assertEqual(db.query(Server).count(),1)
 
-    def test_operator_password_hash_session_expiry_and_login_throttle(self):
-        self.assertNotIn('test-operator-password',ops_auth.password_path().read_text())
-        token=ops_auth.verify_login('test-operator-password','client')
-        request=Request({'type':'http','scheme':'https','path':'/api/ops/session','headers':[(b'host',b'testserver'),(b'cookie',f'{ops_auth.COOKIE}={token}'.encode())]})
-        self.assertTrue(ops_auth.authorized(request))
-        ops_auth.logout(request)
-        with self.assertRaises(HTTPException):ops_auth.authorized(request)
-        for _ in range(5):
-            with self.assertRaises(HTTPException) as error:ops_auth.verify_login('wrong','bad-client')
-            self.assertEqual(error.exception.status_code,401)
-        with self.assertRaises(HTTPException) as error:ops_auth.verify_login('wrong','bad-client')
-        self.assertEqual(error.exception.status_code,429)
+    def test_automatic_session_needs_no_password_and_validation_cannot_create_or_renew(self):
+        with self.client() as client, patch.object(ops_auth, 'verify_login', side_effect=AssertionError('password not needed')):
+            self.assertEqual(client.get('/api/ops/session?validate_only=true').status_code,401)
+            response=self.login(client)
+            self.assertFalse(response.json()['login_required'])
+            self.assertEqual(response.headers['cache-control'],'no-store')
+            token=client.cookies.get(ops_auth.COOKIE)
+            self.assertNotIn(token,response.text)
+            key=ops_auth.hashlib.sha256(token.encode()).hexdigest()
+            expiry=ops_auth.sessions[key]
+            self.assertEqual(client.get('/api/ops/session?validate_only=true').status_code,200)
+            self.assertEqual(ops_auth.sessions[key],expiry)
+            self.login(client)
+            self.assertEqual(client.cookies.get(ops_auth.COOKIE),token)
+            ops_auth.sessions[key]=0
+            rejected=client.get('/api/ops/session?validate_only=true')
+            self.assertEqual(rejected.status_code,401)
+            self.assertNotIn('set-cookie',rejected.headers)
+            self.login(client)
+            self.assertNotEqual(client.cookies.get(ops_auth.COOKIE),token)
+
+    def test_automatic_sessions_are_distinct_and_foreign_origin_cannot_bootstrap(self):
+        with self.client() as first, self.client() as second:
+            self.login(first);self.login(second)
+            self.assertNotEqual(first.cookies.get(ops_auth.COOKIE),second.cookies.get(ops_auth.COOKIE))
+            self.assertEqual(first.get('/api/ops/session',headers={'origin':'https://evil.example'}).status_code,403)
+            self.assertEqual(first.get('/api/ops/session?validate_only=true',headers={'cookie':ops_auth.COOKIE+'=forged'}).status_code,401)
+            self.assertEqual(first.post('/api/ops/login').status_code,200)
 
     def test_https_authentication_and_origin_checks_before_ssh(self):
         with self.client() as client,patch.object(ops,'connect_ssh') as connect:

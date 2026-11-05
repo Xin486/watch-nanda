@@ -1,4 +1,4 @@
-"""HTTPS-only operator sessions; no node passwords or terminal transcripts are logged."""
+"""Automatic HTTPS browser sessions; no operator password is required."""
 import hashlib
 import hmac
 import json
@@ -94,8 +94,31 @@ def authorized(connection, *, websocket=False):
     with lock:
         expiry = sessions.get(key, 0)
     if not token or time.monotonic() >= expiry:
-        raise HTTPException(401, '请先进行运维登录')
+        raise HTTPException(401, '操作会话已失效，请刷新页面重试')
     return key
+
+
+def browser_session(connection):
+    """Establish/renew an opaque browser identity without a login step.
+
+    Validation-only callers must use authorized(), so an invalid bridge cookie
+    cannot be silently replaced with another browser's identity.
+    """
+    secure(connection)
+    now = time.monotonic()
+    token = connection.cookies.get(COOKIE, '')
+    key = hashlib.sha256(token.encode()).hexdigest()
+    with lock:
+        if not token or sessions.get(key, 0) <= now:
+            for old in list(sessions):
+                if sessions[old] <= now:
+                    del sessions[old]
+            if len(sessions) >= 100:
+                raise HTTPException(429, '操作会话已满，请稍后重试')
+            token = secrets.token_urlsafe(48)
+            key = hashlib.sha256(token.encode()).hexdigest()
+        sessions[key] = now + TTL
+    return token
 
 
 def logout(connection):

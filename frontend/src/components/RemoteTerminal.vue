@@ -82,7 +82,7 @@ async function connect() {
         }
       } else if (data.type === 'closed') terminal.writeln(`\r\n[${data.message}]`)
     }
-    ws.onerror = () => { props.access.error = '终端连接失败，请检查 HTTPS、运维登录和 SSH 凭据。' }
+    ws.onerror = () => { props.access.error = '终端连接失败，请检查 HTTPS、页面连接和 SSH 凭据。' }
     ws.onclose = event => {
       if (socket !== ws) return
       if (pendingAuth?.password) pendingAuth.password = ''
@@ -92,7 +92,7 @@ async function connect() {
       terminal.options.disableStdin = true
       terminal.writeln('\r\n[连接已断开]')
       socket = null
-      if (event.code === 4401) props.access.handleError({ response: { status: 401, data: { detail: '运维登录已过期，请重新登录。' } } })
+      if (event.code === 4401) props.access.handleError({ response: { status: 401, data: { detail: '操作会话已失效，请刷新页面重试。' } } })
     }
     terminal.onData(data => {
       if (ws.readyState === WebSocket.OPEN && connected.value) for (let i = 0; i < data.length; i += 4096) ws.send(JSON.stringify({ type: 'input', data: data.slice(i, i + 4096) }))

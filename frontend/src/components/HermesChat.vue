@@ -11,15 +11,12 @@
       <p v-if="shortcutNotice" class="hermes-shortcut-notice" role="status">{{ shortcutNotice }}</p>
 
       <div v-if="!access.secure" class="hermes-welcome"><h3>请通过 HTTPS 访问</h3><p>安全连接后即可使用 Hermes。</p></div>
-      <form v-else-if="!access.authenticated" class="hermes-login" @submit.prevent="login">
+      <div v-else-if="!access.authenticated" class="hermes-login" role="status">
         <span class="hermes-eyebrow">YOUR WORKSPACE ASSISTANT</span>
-        <h3>你好，我是 Hermes。</h3><p>登录后，在这里继续你的对话。</p>
-        <label for="hermes-password">平台运维口令</label>
-        <input id="hermes-password" v-model="access.password" type="password" autocomplete="current-password" required placeholder="输入运维口令" />
-        <button class="hermes-primary" :disabled="access.busy">{{ access.busy ? '正在登录…' : '登录并开始对话' }}</button>
-        <p class="hermes-login-hint">与平台运维页面共用登录状态。</p>
+        <h3>你好，我是 Hermes。</h3><p>正在连接助手…</p>
+        <button v-if="access.error" class="hermes-primary" :disabled="access.busy" @click="login">重新连接</button>
         <p v-if="access.error" class="hermes-error" role="alert">{{ access.error }}</p>
-      </form>
+      </div>
 
       <template v-else>
         <div ref="transcript" class="hermes-transcript" role="log" aria-label="对话记录" aria-live="polite" @scroll="trackScroll">
@@ -41,7 +38,7 @@
           <textarea ref="composer" v-model="draft" rows="2" maxlength="8000" placeholder="向 Hermes 发送消息…" aria-label="聊天消息" :disabled="busy || chat.status === 'running'" @keydown.enter="onEnter" />
           <div class="hermes-composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span><button class="hermes-send" type="submit" :disabled="busy || chat.status === 'running' || !draft.trim()" aria-label="发送消息">↑</button></div>
         </form>
-        <footer class="hermes-footer"><span>AI 回复请核实 · 工具以 test 权限运行</span><button @click="logout">退出登录</button></footer>
+        <footer class="hermes-footer"><span>AI 回复请核实 · 工具以 test 权限运行</span></footer>
       </template>
     </section>
 
@@ -74,7 +71,7 @@ const client = createHermesChat({ changed(value) {
   if (!mounted) return
   backgroundNotice.value = hermesBackgroundNotice(chat.value, value, open.value, backgroundNotice.value)
   chat.value = value; storage(value.id)
-  if (value.error.includes('登录') && !value.id) access.authenticated = false
+  if (value.error.includes('会话') && !value.id) access.authenticated = false
   if (follow) nextTick(() => { if (transcript.value) transcript.value.scrollTop = transcript.value.scrollHeight })
 } })
 client.setActive(false)

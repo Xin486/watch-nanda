@@ -40,7 +40,7 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 
 ## 配置来源
 
-可选的全站 Hermes 悬浮对话使用独立 `watch-nanda-hermes.service` 和回环 7981，沿用 `/api/ops` 的运维认证，不重启监控后端；南京仅在现有 18080 origin 加专用 location。安装、权限、验证及回退见 [Hermes 接入说明](HERMES_CHAT.md)。整套 setup 暂不管理该可选服务，升级前后需保留现场聊天代理。
+可选的全站 Hermes 悬浮对话使用独立 `watch-nanda-hermes.service` 和回环 7981，使用 `/api/ops` 自动建立的浏览器会话，无需运维口令；南京仅在现有 18080 origin 加专用 location。首次添加聊天入口或仅前端更新无需重启监控，修改会话接口时须确认无活动任务再重启相关服务。安装、权限、验证及回退见 [Hermes 接入说明](HERMES_CHAT.md)。整套 setup 暂不管理该可选服务，升级前后需保留现场聊天代理。
 
 | 配置 | 当前来源与用途 |
 | --- | --- |
@@ -52,7 +52,7 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 | TLS | `/etc/node-monitor/tls/`；节点只需受信任的 CA 公钥证书 |
 | SSH 密码加密 | `/etc/node-monitor/ssh-credentials.key`，或 `SSH_CREDENTIAL_KEY_FILE` 指定的文件 |
 | 常用 SSH 凭据 | `/etc/node-monitor/ssh-profiles.json`，或 `SSH_PROFILES_FILE` 指定；权限 600，使用 SSH 独立密钥加密，须一起备份 |
-| 网页运维口令摘要 | `/etc/node-monitor/ops-password.json`，或 `OPS_PASSWORD_FILE` 指定的文件 |
+| 历史网页运维摘要（新版本不再使用） | `/etc/node-monitor/ops-password.json`，或 `OPS_PASSWORD_FILE` 指定的文件 |
 
 2026-10-19 生产后端仍使用 `/usr/bin/python3`；新式 `setup.sh` 会建立 `backend/.venv` 并更新服务。不要把现场旧依赖环境直接写死到新的服务文件。
 
@@ -70,11 +70,11 @@ TLS 文件在 `/etc/node-monitor/tls/`，使用苏州独立 CA，SAN 包含 `10.
 sudo bash setup.sh --systemd
 ```
 
-`setup.sh` 准备 Python/Node、项目依赖、MySQL、HTTPS、运维认证、增量结构、前端和 Agent 包。已有配置不覆盖；升级备份位于 `.runtime/setup-backups/<时间>/`，包含旧依赖、构建、服务配置、受保护配置及已有库的一致性 `database-before.sql.gz`。自动恢复只回退依赖、构建及服务配置，源码需按记录恢复匹配的 Git 版本，数据库不自动降级。备份包含敏感数据，目录权限 700、秘密文件 600，不上传 Git；保留足够磁盘并按现场保留策略整理成功备份。
+`setup.sh` 准备 Python/Node、项目依赖、MySQL、HTTPS、浏览器会话、增量结构、前端和 Agent 包。已有配置不覆盖；升级备份位于 `.runtime/setup-backups/<时间>/`，包含旧依赖、构建、服务配置、受保护配置及已有库的一致性 `database-before.sql.gz`。自动恢复只回退依赖、构建及服务配置，源码需按记录恢复匹配的 Git 版本，数据库不自动降级。备份包含敏感数据，目录权限 700、秘密文件 600，不上传 Git；保留足够磁盘并按现场保留策略整理成功备份。
 
 识别本项目 Nginx 时保持代理/WAF 运行，只停止后端，发布静态资源时保留旧哈希文件、最后替换首页。独立站点创建后端与 HTTPS preview 两个服务。缺失或无法连接原数据库时不会为已有服务创建替代容器或空库，先恢复原容器/端口/挂载。旧 nohup 入口会按监听 PID、启动时间、完整命令及项目工作目录核验，确认归属后 TERM/KILL 并限时等待；未知进程保留并提示，不能按名称全局杀进程或遇 D 状态继续覆盖。
 
-`--skip-deps` 复用现有依赖；`--no-start` 完成后保持停止；`--no-bootstrap` 适用于已准备运行时的离线环境。首次安装用 `--host` 指定证书中的 IPv4/域名；已有地址及证书不自动替换。首次运维口令交互输入，非交互时仅写入 `.runtime/initial-ops-password`（600）；亦可通过 `--ops-password-file` 输入受保护文件。已有摘要保持不变。
+`--skip-deps` 复用现有依赖；`--no-start` 完成后保持停止；`--no-bootstrap` 适用于已准备运行时的离线环境。首次安装用 `--host` 指定证书中的 IPv4/域名；已有地址及证书不自动替换。网页运维不再要求平台口令，初始化不再提示或生成运维口令；兼容参数 `--ops-password-file` 不读取文件。已有旧摘要文件保留但不再参与验证。站点访问权依赖现场内网/WAF 策略，页面自动准备同源 HTTPS 浏览器会话。
 
 新独立站点默认 HTTPS 3000，主机或上游防火墙限制访问时，应按现场管理网策略放行该入口；初始化不自动扩大管理网访问范围。下载依赖可用 `PIP_INDEX_URL` 指定可信镜像，例如南大镜像 `https://mirrors.nju.edu.cn/pypi/web/simple`；联网源不可用时安装失败并保留恢复记录，不忽略依赖错误。
 
@@ -84,7 +84,7 @@ sudo bash setup.sh --systemd
 
 ## 已有生产的小范围发布
 
-若依赖、数据库结构和服务配置均未改变，可保留实际运行环境进行小范围发布：先确认生产工作区干净、无运行中的部署任务及等待处理的批量队列（`/api/ops/agent-batches` 需运维登录读取），保存当前提交、静态文件和 Agent 包的受保护备份；只读迁移检查通过后，将源码快进到已推送的提交。
+若依赖、数据库结构和服务配置均未改变，可保留实际运行环境进行小范围发布：先确认生产工作区干净、无运行中的部署任务及等待处理的批量队列（`/api/ops/agent-batches` 需先自动建立浏览器会话读取），保存当前提交、静态文件和 Agent 包的受保护备份；只读迁移检查通过后，将源码快进到已推送的提交。
 
 使用锁文件对应的前端构建结果发布，保留旧哈希资源，最后原子替换首页。将经过清单及源码哈希校验、原生自检的 Agent 包和两个摘要侧文件一起替换；常驻后端模块变化时再重启 `watch-nanda-backend.service`。仅修改 `scripts/install_agent.py`、节点安装器/服务模板及匹配包时，在确认没有部署任务或运行队列后一起发布；每个部署由新的 `backend/agent_job.py` 子进程读取安装器与包，不必重启后端。其他无需改动的 Nginx/WAF、systemd 配置和依赖环境保持不动，不执行初始化或迁移写入。仅前端和文档变化时，只更新对应源码与静态文件，不必替换未变化的 Agent 包或重启后端。发布后验证 HTTPS、API、SSE、WSS 路由及 Agent 上报；记录可恢复的备份路径。回退时恢复相互匹配的原提交、首页与 Agent 包，涉及常驻模块时重启后端，不回退或覆盖数据库。
 
@@ -114,7 +114,7 @@ python3 migrate_agent.py --require-ready
 
 ## 发布验证与恢复
 
-常用凭据文件在首次保存时创建；读取列表不写文件，不需运行数据库迁移。批量重部署 API 与常用凭据 API 均在 `/api/ops/` 下，复用同源 HTTPS 运维认证。批次和手动密码不持久化，升级重启前应结束或停止当前队列，不能将重启后的空列表视为节点已恢复。
+常用凭据文件在首次保存时创建；读取列表不写文件，不需运行数据库迁移。批量重部署 API 与常用凭据 API 均在 `/api/ops/` 下，复用同源 HTTPS 浏览器会话，无需平台口令。批次和手动密码不持久化，升级重启前应结束或停止当前队列，不能将重启后的空列表视为节点已恢复。
 
 检查后端和 Nginx 服务状态、HTTPS 页面/API/SSE、WSS 运维入口，以及节点最近上报/采集时间；确认 7980 仅回环监听、管理访问策略和雷池链路未改变。前端发布保留旧哈希资源，最后替换首页，兼容已打开的页面。
 

@@ -44,14 +44,14 @@ def verify_session(headers):
     """Ask the live monitor; never duplicate its in-memory session database."""
     connection = http.client.HTTPConnection('127.0.0.1', 7980, timeout=4)
     try:
-        connection.request('GET', '/api/ops/session', headers=headers)
+        connection.request('GET', '/api/ops/session?validate_only=true', headers=headers)
         response = connection.getresponse()
         response.read(4096)
         if response.status != 200:
             raise HTTPException(401 if response.status == 401 else 503,
-                                '请重新进行运维登录' if response.status == 401 else '运维认证服务暂不可用')
+                                '操作会话已失效，请刷新页面重试' if response.status == 401 else '操作会话服务暂不可用')
     except (OSError, http.client.HTTPException):
-        raise HTTPException(503, '运维认证服务暂不可用') from None
+        raise HTTPException(503, '操作会话服务暂不可用') from None
     finally:
         connection.close()
 
@@ -63,7 +63,7 @@ async def authenticate(request):
         raise HTTPException(403, '聊天仅允许同源 HTTPS 访问')
     token = request.cookies.get(COOKIE, '')
     if not token or len(token) > 256:
-        raise HTTPException(401, '请先进行运维登录')
+        raise HTTPException(401, '操作会话尚未就绪，请刷新页面重试')
     headers = {'Host': host, 'X-Forwarded-Proto': 'https', 'Cookie': COOKIE + '=' + token}
     await asyncio.to_thread(verify_session, headers)
     return hashlib.sha256(token.encode()).hexdigest(), headers
