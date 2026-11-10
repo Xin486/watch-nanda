@@ -143,7 +143,8 @@ class Bridge:
             return item.snapshot()
         if not message.text.strip():
             raise HTTPException(422, '请输入消息')
-        running = [c for c in self.conversations.values() if c.status == 'running' or (c.task and not c.task.done())]
+        running = [c for c in self.conversations.values() if c.status == 'running'
+                   or (c.task and not c.task.done()) or c.error.startswith('停止结果尚未确认')]
         if item.status == 'running' or any(c.owner == item.owner for c in running):
             raise HTTPException(409, '当前仍有回复正在生成，请等待或停止')
         if len(running) >= 2:

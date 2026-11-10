@@ -205,6 +205,19 @@ else:
         with self.assertRaises(ValueError):
             self.message('x' * 8001)
 
+    async def test_unconfirmed_native_stop_retains_owner_and_global_capacity(self):
+        self.item.status, self.item.error = 'error', '停止结果尚未确认，请检查任务'
+        same_owner = self.bridge.create('owner-one')
+        with self.assertRaises(HTTPException) as error:
+            self.bridge.start(same_owner, self.message(), {})
+        self.assertEqual(error.exception.status_code, 409)
+        second = self.bridge.create('owner-two')
+        second.status, second.error = 'error', '停止结果尚未确认，请检查任务'
+        third = self.bridge.create('owner-three')
+        with self.assertRaises(HTTPException) as error:
+            self.bridge.start(third, self.message(), {})
+        self.assertEqual(error.exception.status_code, 429)
+
     async def test_background_work_finishes_without_any_snapshot_requests(self):
         # After the submission response, no browser polling or open panel is
         # required for the server-owned task to perform its work and finish.
