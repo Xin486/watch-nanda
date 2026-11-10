@@ -83,6 +83,8 @@ else:
 ''')
         self.script.chmod(0o700)
         self.patches = [patch.object(module, 'CLI', str(self.script)),
+                        patch.object(module, 'runtime_settings', lambda: {'enabled': True, 'revision': 1,
+                            'model': 'test-model', 'api_base': 'https://api.example/v1', 'api_key': 'test-only'}),
                         patch.object(module, 'resolve_command', lambda: [str(self.script)]),
                         patch.object(module, 'WORKSPACE', self.temp.name),
                         patch.object(module, 'verify_session', lambda _: None)]
@@ -150,6 +152,47 @@ else:
         await self.item.task
         self.assertEqual(self.item.status, 'error')
         self.assertNotIn('secret-private-key', str(self.item.snapshot()))
+
+    async def test_disabled_or_changed_configuration_stops_background_generation(self):
+        for settings in ({'enabled': False, 'revision': 1}, {'enabled': True, 'revision': 2}):
+            item = self.bridge.create('config-owner')
+            self.bridge.start(item, self.message('slow'), {})
+            await asyncio.sleep(.1)
+            with patch.object(module, 'runtime_settings', return_value=settings):
+                await asyncio.wait_for(item.task, 8)
+            self.assertEqual(item.status, 'stopped')
+            self.assertIsNone(item.process)
+            self.assertNotIn('api_key', item.config)
+
+    async def test_disabled_assistant_rejects_new_work_and_changed_provider_requires_new_conversation(self):
+        with patch.object(module, 'runtime_settings', return_value={'enabled': False}):
+            with self.assertRaises(HTTPException) as error:
+                self.bridge.start(self.item, self.message(), {})
+            self.assertEqual(error.exception.status_code, 503)
+        self.bridge.start(self.item, self.message(), {})
+        await self.item.task
+        with patch.object(module, 'runtime_settings', return_value={'enabled': True, 'revision': 2}):
+            with self.assertRaises(HTTPException) as error:
+                self.bridge.start(self.item, self.message(ident='request-second-123'), {})
+            self.assertEqual(error.exception.status_code, 409)
+
+    async def test_stop_retry_does_not_cancel_native_cleanup_in_progress(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        terminate = self.bridge.terminate
+        async def cleanup(item):
+            entered.set()
+            await release.wait()
+            await terminate(item)
+        with patch.object(self.bridge, 'terminate', side_effect=cleanup):
+            self.bridge.start(self.item, self.message('slow'), {})
+            await asyncio.sleep(.1)
+            first = asyncio.create_task(self.bridge.stop(self.item))
+            await entered.wait()
+            second = asyncio.create_task(self.bridge.stop(self.item))
+            await asyncio.sleep(.02)
+            self.assertFalse(second.done())
+            release.set()
+            await asyncio.gather(first, second)
 
     async def test_capacity_and_input_limits(self):
         self.bridge.start(self.item, self.message('slow'), {})

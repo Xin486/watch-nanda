@@ -3,7 +3,6 @@ export function httpsPageUrl(href) {
   const url = new URL(href)
   if (url.protocol === 'http:') {
     url.protocol = 'https:'
-    if (['3000', '7980'].includes(url.port)) url.port = ''
   }
   return url
 }

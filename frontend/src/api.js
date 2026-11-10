@@ -10,6 +10,13 @@ const http = axios.create({
 })
 
 export const api = {
+  platform: () => http.get('/api/platform'),
+  agentSettings: () => http.get('/api/ops/platform/agent'),
+  saveAgentSettings: data => http.put('/api/ops/platform/agent', data),
+  agentReportEndpoint: host => http.get('/api/ops/platform/agent/report', { params: { host } }),
+  hermesSettings: () => http.get('/api/ops/platform/hermes'),
+  saveHermesSettings: data => http.put('/api/ops/platform/hermes', data, { timeout: 65000 }),
+  saveBranding: data => http.put('/api/ops/platform/branding', data),
   /** 获取服务器列表（支持 { group } 分组过滤） */
   getServers: (params) => http.get('/api/servers', { params }),
 

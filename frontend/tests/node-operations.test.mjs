@@ -187,6 +187,7 @@ test('new-server deployment access keeps its target and HTTP cannot authenticate
 test('new Agent node opens deployment, while adding an SSH node keeps the current page', () => {
   const targets = []
   const context = {
+    usePlatformSettings: () => ({ platform: ref({ branding: {}, hermes: { enabled: false } }), refreshPlatform: async () => {} }),
     computed, ref, watch: () => {}, onMounted: () => {}, onUnmounted: () => {},
     useRoute: () => ({ path: '/dashboard' }), useRouter: () => ({ push: path => targets.push(path) }),
     useServers: () => ({ servers: ref([]), subscribe() {} }),
@@ -216,6 +217,7 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
     setInterval: fn => { timers.push(fn); return fn }, clearInterval() {},
     window: { dispatchEvent() {} }, CustomEvent: class {},
     api: {
+      agentReportEndpoint: async () => ({ data: { url: 'https://monitor.example/api/agent/report' } }),
       deploymentJobs: async id => { assert.equal(id, 71); return { data: [] } },
       deployAgent: async (id, payload) => { calls.push('deploy'); assert.equal(id, 71); assert.equal(payload.use_saved, true); return { data: { id: 'job-71', status: 'running', logs: [] } } },
       deploymentJob: async id => { assert.equal(id, 'job-71'); return { data: { id, status: 'success', logs: ['Agent ready'] } } },
@@ -224,9 +226,11 @@ test('new-node deployment checks SSH before submitting one job and resumes its l
   vm.createContext(context)
   const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
-  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,refreshFeed: () => feed?.refresh()}', context))
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,endpointReady,reportEndpoint,refreshFeed: () => feed?.refresh()}', context))
   try {
     await nextTick()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(context.exposed.endpointReady.value, true, context.exposed.reportEndpoint.value)
     await context.exposed.deploy()
     assert.deepEqual(calls, ['ssh', 'deploy'])
     assert.equal(access.credentials.password, '')
@@ -252,6 +256,7 @@ test('redeployment is explicit, uses the existing Agent ID and ignores old deplo
     useNodeAccess: options => { assert.equal(options.selectable, false); return access },
     setInterval: () => 1, clearInterval() {}, window: { dispatchEvent() {} }, CustomEvent: class {},
     api: {
+      agentReportEndpoint: async () => ({ data: { url: 'https://monitor.example/api/agent/report' } }),
       deploymentJobs: async () => ({ data: [{ id: 'old-deploy', kind: 'deploy', status: 'success' }] }),
       deployAgent: () => { throw Error('New-server API must not be used') },
       redeployAgent: async (id, payload) => { calls.push('redeploy'); assert.equal(id, 7); assert.equal(payload.use_saved, true); return { data: { id: 'repair-7', status: 'running', kind: 'redeploy' } } },
@@ -261,11 +266,13 @@ test('redeployment is explicit, uses the existing Agent ID and ignores old deplo
   vm.createContext(context)
   const source = fs.readFileSync(new URL('../src/views/AgentDeploy.vue', import.meta.url), 'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
   const scope = effectScope()
-  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,refreshFeed: () => feed?.refresh()}', context))
+  scope.run(() => vm.runInContext(source + '\nthis.exposed = {deploy,job,endpointReady,reportEndpoint,refreshFeed: () => feed?.refresh()}', context))
   try {
     await nextTick()
     assert.deepEqual(calls, [])
     assert.equal(context.exposed.job.value, null)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(context.exposed.endpointReady.value, true, context.exposed.reportEndpoint.value)
     await context.exposed.deploy()
     assert.deepEqual(calls, ['ssh', 'redeploy'])
     assert.equal(access.credentials.password, '')

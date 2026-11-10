@@ -16,19 +16,32 @@ import secrets
 import signal
 import subprocess
 import time
+import shutil
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 PREFIX = '/api/ops/hermes'
 COOKIE = 'watch_nanda_ops'
-CLI = os.getenv('HERMES_CLI', '/data2/hermes-cli/hermes')
-WORKSPACE = os.getenv('HERMES_CHAT_WORKSPACE', '/data2/hermes-cli/workspace')
+CLI = os.getenv('HERMES_CLI') or shutil.which('hermes') or str(Path.home() / '.local/bin/hermes')
+WORKSPACE = os.getenv('HERMES_CHAT_WORKSPACE', str(Path.home() / '.local/share/watch-nanda/workspace'))
 MAX_OUTPUT = 128_000
 TURN_TIMEOUT = max(60, min(3600, int(os.getenv('HERMES_CHAT_TURN_TIMEOUT_SECONDS', '1800'))))
 
 
+def runtime_settings():
+    path = Path(os.getenv('HERMES_CONFIG_FILE', str(Path.home() / '.config/watch-nanda/hermes.json')))
+    if not path.exists():
+        return {'enabled': False, 'revision': 0}
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise RuntimeError('助手配置无效')
+    return value
+
+
 def resolve_command():
+    if os.name == 'posix' and os.geteuid() == 0:
+        raise RuntimeError('Hermes 工具服务必须以普通用户运行')
     # Use Hermes' machine boundary so runtime repins do not leave us pointing at
     # an obsolete venv. The inert stdlib module finishes before our worker starts.
     result = subprocess.run([CLI, '--print-runtime-command', '--module', 'types'],
@@ -42,7 +55,7 @@ def resolve_command():
 
 def verify_session(headers):
     """Ask the live monitor; never duplicate its in-memory session database."""
-    connection = http.client.HTTPConnection('127.0.0.1', 7980, timeout=4)
+    connection = http.client.HTTPConnection('127.0.0.1', int(os.getenv('WATCH_NANDA_BACKEND_PORT', '7980')), timeout=4)
     try:
         connection.request('GET', '/api/ops/session?validate_only=true', headers=headers)
         response = connection.getresponse()
@@ -84,6 +97,7 @@ class Conversation:
     process: object = None
     command: object = None
     cancel_reason: str = ''
+    config: dict = field(default_factory=dict, repr=False)
 
     def snapshot(self):
         self.touched = time.monotonic()
@@ -105,7 +119,7 @@ class Bridge:
     def create(self, owner):
         now = time.monotonic()
         for key, item in list(self.conversations.items()):
-            if item.status != 'running' and now - item.touched > 3600:
+            if item.status != 'running' and not (item.task and not item.task.done()) and not item.error.startswith('停止结果尚未确认') and now - item.touched > 3600:
                 del self.conversations[key]
         if len(self.conversations) >= 50:
             raise HTTPException(429, '聊天会话已满，请稍后重试')
@@ -120,6 +134,11 @@ class Bridge:
         return item
 
     def start(self, item, message, headers):
+        settings = runtime_settings()
+        if not settings.get('enabled'):
+            raise HTTPException(503, '助手已关闭，请在设置中开启')
+        if item.session and item.config.get('revision') != settings.get('revision'):
+            raise HTTPException(409, '助手配置已更新，请新建对话')
         if message.request_id in item.requests:
             return item.snapshot()
         if not message.text.strip():
@@ -131,6 +150,7 @@ class Bridge:
             raise HTTPException(429, 'Hermes 正忙，请稍后重试')
         if len(item.messages) >= 100:
             raise HTTPException(409, '对话过长，请新建对话')
+        item.config = settings
         item.requests.add(message.request_id)
         item.messages.extend([{'role': 'user', 'text': message.text.strip()},
                               {'role': 'assistant', 'text': ''}])
@@ -141,6 +161,8 @@ class Bridge:
     async def terminate(self, item):
         process = item.process
         if process is None:
+            if item.error.startswith('停止结果尚未确认'):
+                await self.cleanup_session(item)
             return
         # Always kill the dedicated group: tools may outlive their CLI parent.
         try:
@@ -156,6 +178,9 @@ class Bridge:
         except ProcessLookupError:
             pass
         await process.wait()
+        await self.cleanup_session(item)
+
+    async def cleanup_session(self, item):
         if item.session and item.command and item.status in ('stopped', 'error'):
             cleanup = None
             try:
@@ -166,6 +191,8 @@ class Bridge:
                     {'action': 'stop', 'session': item.session}).encode()), 35)
                 if cleanup.returncode:
                     raise RuntimeError('cleanup refused')
+                if item.error.startswith('停止结果尚未确认'):
+                    item.status, item.error = 'stopped', '已确认任务停止'
             except Exception:
                 if cleanup and cleanup.returncode is None:
                     os.killpg(cleanup.pid, signal.SIGKILL)
@@ -175,11 +202,15 @@ class Bridge:
     async def stop(self, item, reason='已停止生成'):
         item.cancel_reason = reason
         if item.task and not item.task.done():
-            item.task.cancel()
+            if item.status == 'running':
+                item.task.cancel()
             await asyncio.gather(item.task, return_exceptions=True)
         # Includes cancellation before the task got its first event-loop turn.
         if item.status == 'running':
             item.status, item.error, item.activity = 'stopped', reason, ''
+            item.config.pop('api_key', None)
+        if item.error.startswith('停止结果尚未确认'):
+            await self.terminate(item)
 
     async def read(self, item, prompt):
         Path(WORKSPACE).mkdir(parents=True, exist_ok=True)
@@ -196,7 +227,9 @@ class Bridge:
             # outer finally always terminates the entire child process group.
             item.process = await spawning
             raise
-        item.process.stdin.write(json.dumps({'prompt': prompt, 'session': item.session}).encode())
+        item.process.stdin.write(json.dumps({'prompt': prompt, 'session': item.session,
+            'model': item.config.get('model'), 'base_url': item.config.get('api_base'),
+            'api_key': item.config.get('api_key')}).encode())
         await item.process.stdin.drain()
         item.process.stdin.close()
         result = None
@@ -241,12 +274,15 @@ class Bridge:
                 if time.monotonic() - start > TURN_TIMEOUT:
                     raise RuntimeError('回复超时，请缩小问题范围后重试')
                 if not reader.done():
+                    settings = runtime_settings()
+                    if not settings.get('enabled') or settings.get('revision') != item.config.get('revision'):
+                        raise HTTPException(503, '助手配置已变更')
                     await asyncio.to_thread(verify_session, headers)
             await reader
         except asyncio.CancelledError:
             item.status, item.error = 'stopped', item.cancel_reason or '已停止生成'
         except HTTPException:
-            item.status, item.error = 'stopped', '运维会话已失效，请重新登录'
+            item.status, item.error = 'stopped', '助手已关闭、配置已更新或操作会话失效，任务已停止'
         except Exception as error:
             item.status = 'error'
             item.error = str(error) if isinstance(error, RuntimeError) else 'Hermes 暂不可用，请稍后重试'
@@ -255,6 +291,7 @@ class Bridge:
             await asyncio.gather(reader, return_exceptions=True)
             await self.terminate(item)
             item.process, item.activity = None, ''
+            item.config.pop('api_key', None)
 
 
 bridge = Bridge()
@@ -276,9 +313,28 @@ async def private_response(request, call_next):
     return response
 
 
+@app.post(PREFIX + '/reload')
+async def reload_settings(request: Request):
+    await authenticate(request)
+    current = runtime_settings()
+    outdated = [item for item in bridge.conversations.values()
+                if (item.task and not item.task.done() or item.error.startswith('停止结果尚未确认'))
+                and (not current.get('enabled') or item.config.get('revision') != current.get('revision'))]
+    async def settle(item):
+        await bridge.stop(item, '助手配置已更新')
+        if item.error.startswith('停止结果尚未确认'):
+            await bridge.terminate(item)
+    await asyncio.gather(*(settle(item) for item in outdated))
+    if any(item.error.startswith('停止结果尚未确认') for item in outdated):
+        raise HTTPException(503, '任务停止尚未确认')
+    return {'updated': True}
+
+
 @app.post(PREFIX + '/conversations')
 async def create(request: Request):
     owner, _ = await authenticate(request)
+    if not runtime_settings().get('enabled'):
+        raise HTTPException(503, '助手已关闭，请在设置中开启')
     return bridge.create(owner).snapshot()
 
 
@@ -307,5 +363,7 @@ async def delete(ident: str, request: Request):
     owner, _ = await authenticate(request)
     item = bridge.get(ident, owner)
     await bridge.stop(item)
+    if item.error.startswith('停止结果尚未确认'):
+        raise HTTPException(503, '任务停止尚未确认，请重试停止后再新建对话')
     del bridge.conversations[ident]
     return {'deleted': True}

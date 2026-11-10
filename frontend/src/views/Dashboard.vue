@@ -25,7 +25,7 @@
             <div class="node-context"><div class="gpu-summary"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/></svg><span :title="gpuSummary(server.gpu_data)">{{ gpuSummary(server.gpu_data) }}</span><small>{{ server.gpu_data?.length || 0 }} 张</small></div><div class="process-summary"><span class="process-label">CPU 占用最高进程</span><p :title="server.top_process || '暂无进程数据'">{{ server.top_process || '暂无进程数据' }}</p></div></div>
           </template>
           <div v-else class="unavailable-body"><span class="unavailable-icon" aria-hidden="true">{{ server.status === 'offline' ? '○' : '◷' }}</span><strong>{{ statusLabel(server.status) }}</strong><p>{{ server.status === 'stale' ? '指标暂不展示，等待新的采集数据' : server.status === 'pending' ? '等待首次采集完成' : server.collection_mode === 'agent' ? '尚未收到有效上报，请检查节点采集服务' : 'SSH 采集未能建立连接，请检查连接配置' }}</p></div>
-          <footer class="card-footer"><span>{{ collectedAge(server.data_age_seconds) }}</span><button type="button" class="hermes-node-shortcut" :disabled="!server.hostname?.trim()" :aria-label="`复制节点名 ${server.hostname} 并填入 Hermes 对话框`" title="复制节点名并填入 Hermes" @click.stop="openHermesForNode(server.hostname)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7l-5 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8v6m8-6v6m-8-3h8"/></svg><span>Hermes</span></button><span class="detail-link">查看详情 <span aria-hidden="true">↗</span></span></footer>
+          <footer class="card-footer"><span>{{ collectedAge(server.data_age_seconds) }}</span><button v-if="platform.hermes?.enabled" type="button" class="hermes-node-shortcut" :disabled="!server.hostname?.trim()" :aria-label="`复制节点名 ${server.hostname} 并填入 Hermes 对话框`" title="复制节点名并填入 Hermes" @click.stop="openHermesForNode(server.hostname)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-7l-5 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8v6m8-6v6m-8-3h8"/></svg><span>Hermes</span></button><span class="detail-link">查看详情 <span aria-hidden="true">↗</span></span></footer>
         </article>
       </div>
     </section>
@@ -43,8 +43,10 @@ import { statusLabel, ageLabel } from '../utils/serverStatus'
 import { useServers } from '../composables/useServers'
 import { nodeMetrics, gpuSummary, gpuMemoryAverage } from '../utils/dashboardMetrics'
 import { openHermesForNode } from '../utils/hermesNodeShortcut'
+import { usePlatformSettings } from '../composables/usePlatformSettings'
 
 const route = useRoute()
+const { platform } = usePlatformSettings()
 const { servers, subscribe } = useServers()
 const searchQuery = ref(''), statusFilter = ref('all'), sortBy = ref('default'), selectedId = ref(null)
 const currentTime = ref(new Date().toLocaleTimeString('zh-CN', { hour12: false }))

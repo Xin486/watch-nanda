@@ -3,7 +3,7 @@
     <!-- 与主内容共享日夜主题的导航栏 -->
     <aside class="sidebar">
       <div class="logo-area">
-        <h2>{{ companyName || '南大仙林' }}</h2>
+        <h2>{{ platform.branding?.company_name || companyName || 'Node Monitor' }}</h2>
         <ThemeToggle v-if="route.path !== '/dashboard' && route.path !== '/bigscreen'"/>
       </div>
       
@@ -53,7 +53,7 @@
     </main>
 
     <AddServerModal v-if="showAddModal" :groups="allGroups" @close="showAddModal = false" @created="onServerCreated" />
-    <HermesChat />
+    <HermesChat v-if="platform.hermes?.enabled" :model-label="platform.hermes.model" />
     <div v-if="addNotice" class="add-node-success" role="status"><span aria-hidden="true">✓</span>{{ addNotice }}</div>
   </div>
 </template>
@@ -67,11 +67,15 @@ import HermesChat from './components/HermesChat.vue'
 import NavIcon from './components/NavIcon.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import { useServers } from './composables/useServers'
+import { usePlatformSettings } from './composables/usePlatformSettings'
 
 const route = useRoute()
 const router = useRouter()
 const { servers, subscribe } = useServers()
-const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
+const { platform, refreshPlatform } = usePlatformSettings()
+let platformTimer
+onUnmounted(() => clearInterval(platformTimer))
+const companyName = ref(localStorage.getItem('companyName') || 'Node Monitor')
 const customGroups = ref(JSON.parse(localStorage.getItem('customGroups') || '[]'))
 
 // 弹窗状态与表单
@@ -107,15 +111,17 @@ const onServerCreated = (node) => {
 
 // 同步浏览器标签页标题
 const updatePageTitle = () => {
-  document.title = localStorage.getItem('pageTitle') || 'Node Monitor'
+  document.title = platform.value.branding?.page_title || localStorage.getItem('pageTitle') || 'Node Monitor'
 }
 
 onMounted(() => {
   subscribe()   // 建立 SSE 连接，侧边栏分组随数据实时更新
+  refreshPlatform().catch(() => {})
+  platformTimer = setInterval(() => refreshPlatform().catch(() => {}), 30000)
   updatePageTitle()
 
   window.addEventListener('storage', () => {
-    companyName.value = localStorage.getItem('companyName') || '南大仙林'
+    companyName.value = localStorage.getItem('companyName') || 'Node Monitor'
     updatePageTitle()
   })
 })
@@ -124,6 +130,7 @@ onMounted(() => {
 watch(() => route.path, () => {
   updatePageTitle()
 })
+watch(() => platform.value.branding?.page_title, updatePageTitle)
 </script>
 
 <style>

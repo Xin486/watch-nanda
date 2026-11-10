@@ -1,22 +1,9 @@
 <template>
   <div class="settings-page">
+    <PlatformSettings />
     <div class="sync-status" :class="{ failed: syncError }">{{ syncError || (loading ? '正在同步服务器配置…' : '配置已同步 · 修改后点击保存') }}<button v-if="syncError" @click="loadConfigs">重试同步</button></div>
     <div class="settings-grid">
       <div class="panel"><h2>常用 SSH 用户名和密码</h2><p class="desc">集中维护加密保存的常用登录凭据，供批量 Agent 重部署按优先级尝试。</p><router-link to="/settings/ssh-credentials">管理常用 SSH 凭据 ↗</router-link></div>
-      <!-- 基础设置 -->
-      <div class="panel">
-        <h2>系统设置</h2>
-        <div class="form-group">
-          <label>后台标题 (大屏与侧边栏显示)</label>
-          <input type="text" v-model="companyName" placeholder="输入公司或集群名称">
-        </div>
-        <div class="form-group" style="margin-top: 15px;">
-          <label>网页标签标题 (浏览器 Tab 栏显示)</label>
-          <input type="text" v-model="pageTitle" placeholder="例如: Node Monitor">
-        </div>
-        <button class="btn btn-primary" @click="saveBaseSettings" style="margin-top: 15px;">保存生效</button>
-      </div>
-
       <!-- 告警规则设置 -->
       <div class="panel" @input="alertDirty = true" @change="alertDirty = true">
         <h2>告警规则配置</h2>
@@ -75,9 +62,8 @@
 // 设置页：系统标题 / 告警规则 / SMTP 发件配置
 import { ref, onMounted } from 'vue'
 import { api } from '../api'
+import PlatformSettings from '../components/PlatformSettings.vue'
 
-const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
-const pageTitle = ref(localStorage.getItem('pageTitle') || 'Node Monitor')
 
 // ── 缓存键 ────────────────────────────────────────────────
 const CACHE_ALERT = 'settings_alert'
@@ -134,14 +120,6 @@ const loadConfigs = async () => {
   }
   if (results.some(r => r.status === 'rejected')) syncError.value = '部分配置同步失败，未同步的配置暂不可保存；当前输入已保留。'
   loading.value = false
-}
-
-const saveBaseSettings = () => {
-  localStorage.setItem('companyName', companyName.value)
-  localStorage.setItem('pageTitle', pageTitle.value)
-  document.title = pageTitle.value
-  window.dispatchEvent(new Event('storage'))
-  alert('✅ 系统设置已保存并生效')
 }
 
 const saveAlertSettings = async () => {

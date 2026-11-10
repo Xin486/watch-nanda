@@ -27,13 +27,19 @@ async def run(payload):
         if stopped.is_set():
             return 130
         if payload.get('session'):
-            snapshot = await client.rpc('session.resume', session_id=payload['session'])
+            snapshot = await client.rpc('session.resume', session_id=payload['session'],
+                **({'api_key': payload['api_key']} if payload.get('api_key') else {}))
         else:
             description = await client.rpc('runtime.describe')
             parameters = description.get('session_create', {}).get('parameters', [])
+            route = {key: payload[key] for key in ('model', 'base_url', 'api_key') if payload.get(key)}
+            if route:
+                route['provider'] = 'custom'
+            if set(route) - set(parameters):
+                raise RuntimeError('Hermes 运行时不支持所需模型配置接口')
             snapshot = await client.rpc('session.create', request_id=uuid.uuid4().hex,
                                         source='oneshot', cwd=os.getcwd(),
-                                        **client_env_policy(parameters))
+                                        **client_env_policy(parameters), **route)
         if payload.get('action') == 'stop':
             await asyncio.wait_for(client.rpc('session.interrupt', session_id=snapshot['stored_session_id'],
                                                execution_generation=snapshot.get('execution_generation', 0)), 3)

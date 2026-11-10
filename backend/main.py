@@ -34,6 +34,8 @@ from core.ssh_credentials import encrypt_password
 from core.operations import router as operations_router, assert_idle
 from core.ssh_profiles import router as ssh_profiles_router
 from core.agent_batch import router as agent_batch_router
+from core.platform_routes import router as platform_router, public as public_platform_router
+from core.hermes_proxy import router as hermes_proxy_router
 
 # ---------------------------------------------------------------------------
 # 应用初始化
@@ -42,6 +44,17 @@ app = FastAPI(title="Node Monitor API")
 app.include_router(operations_router)
 app.include_router(ssh_profiles_router)
 app.include_router(agent_batch_router)
+app.include_router(platform_router)
+app.include_router(public_platform_router)
+app.include_router(hermes_proxy_router)
+
+
+@app.middleware('http')
+async def platform_no_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path == '/api/platform' or request.url.path.startswith('/api/ops/platform/'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.exception_handler(RequestValidationError)

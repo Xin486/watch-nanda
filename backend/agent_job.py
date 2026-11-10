@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from install_agent import install, default_report_url, InstallError
 sys.path.insert(0, str(ROOT / 'backend'))
 from core.config import settings  # Load .env and site configuration in this child.
+from core.platform_config import report_ca
 
 
 def interrupted(*_):
@@ -23,7 +24,7 @@ def main():
     data = json.loads(sys.stdin.buffer.read(16384))
     args = argparse.Namespace(ip=data['host'], port=data['port'], user=data['username'],
         server_id=data['server_id'], url=default_report_url(data['host']),
-        ca_file=Path(os.getenv('AGENT_CA_FILE', '/etc/node-monitor/tls/ca.crt')), bundle=None, source=False, check_only=False, require_bundle=True,
+        ca_file=report_ca(), bundle=None, source=False, check_only=False, require_bundle=True,
         reinstall=bool(data.get('reinstall', False)))
     if not list((ROOT / 'agent' / 'dist').glob('node-monitor-agent-linux-*.tar.gz')):
         raise InstallError('中心缺少独立 Agent 包，请先运行 agent/build.sh')

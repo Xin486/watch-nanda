@@ -6,7 +6,7 @@
       <p class="deployment-note">使用左侧用户名和密码连接当前节点，自动检查 sudo、时钟、磁盘、证书与出站 HTTPS。UFW/firewalld 仅补充到上报地址和端口的出站规则，保留其他规则；必须通过服务账户真实上报验证才算部署完成。</p>
       <p class="deployment-note">首次部署和重部署均覆盖安装：先终止旧 Agent、移除旧服务和配置，再安装新版并验证上报；自动处理上次中断的安装记录。保留节点编号、分组和历史，失败时尝试恢复备份。只有点击下方按钮才会开始；旧进程无法终止时会明确报错。</p>
       <p v-if="!eligible" class="operation-error" role="alert">该节点已不再使用 Agent 采集，请返回节点配置核对；此页面不会切换其采集方式。</p>
-      <div class="deploy-actions"><span>{{ redeploy ? '固定当前节点，保留 Agent 采集方式。' : '部署成功后自动切换为 Agent 采集。' }}</span><button class="primary-button" :disabled="access.busy || !eligible || (!redeploy && job?.status === 'success')" @click="deploy">{{ job?.status === 'running' ? '正在部署…' : preparing ? '准备部署…' : job?.status === 'success' ? (redeploy ? '再次重新部署 Agent' : '部署完成') : job?.status === 'failed' ? '重试部署 Agent' : redeploy ? '重新部署 Agent' : '一键部署 Agent' }}</button></div>
+      <div class="deploy-actions"><span>{{ redeploy ? '固定当前节点，保留 Agent 采集方式。' : '部署成功后自动切换为 Agent 采集。' }}</span><button class="primary-button" :disabled="!endpointReady || access.busy || !eligible || (!redeploy && job?.status === 'success')" @click="deploy">{{ job?.status === 'running' ? '正在部署…' : preparing ? '准备部署…' : job?.status === 'success' ? (redeploy ? '再次重新部署 Agent' : '部署完成') : job?.status === 'failed' ? '重试部署 Agent' : redeploy ? '重新部署 Agent' : '一键部署 Agent' }}</button></div>
       <div v-if="job" class="job-result" :class="job.status"><div class="job-caption" role="status"><strong>{{ job.status === 'running' ? '部署进行中' : job.status === 'success' ? '部署完成' : '需要检查' }}</strong><span>{{ job.message }}</span></div><DeploymentLog :key="job.id" :lines="job.logs" :state="feedState" :updated-at="updatedAt" /></div>
       <div class="deployment-complete"><router-link to="/dashboard">{{ job?.status === 'success' ? '完成，返回节点总览' : job?.status === 'running' ? '返回总览，任务继续运行' : '稍后部署，返回节点总览' }} ↗</router-link></div>
       <AgentHealthPanel v-if="redeploy && eligible && access.node" :key="access.node.id" :server-id="access.node.id" hide-redeploy />
@@ -27,7 +27,18 @@ const job = ref(null), preparing = ref(false), loading = ref(false)
 const activity = computed(() => preparing.value || loading.value || job.value?.status === 'running')
 const access = useNodeAccess({ selectable: false, activity })
 const eligible = computed(() => !props.redeploy || access.node?.collection_mode === 'agent')
-const reportEndpoint = computed(() => access.node?.ip_address?.startsWith('192.168.1.') ? 'https://192.168.1.24/api/agent/report' : 'https://114.212.165.149:59443/api/agent/report')
+const reportEndpoint = ref('正在读取本站上报入口…'), endpointReady = ref(false)
+let endpointVersion = 0
+watch([() => access.authenticated, () => access.node?.ip_address], async () => {
+  const current = ++endpointVersion
+  endpointReady.value = false
+  reportEndpoint.value = '正在读取本站上报入口…'
+  if (!access.authenticated || !access.node) return
+  try {
+    const { data } = await api.agentReportEndpoint(access.node.ip_address)
+    if (current === endpointVersion) { reportEndpoint.value = data.url; endpointReady.value = Boolean(data.url) }
+  } catch { if (current === endpointVersion) reportEndpoint.value = '请在设置中配置上报入口' }
+}, { immediate: true })
 const feedState = ref(''), updatedAt = ref(0)
 let feed, generation = 0, disposed = false
 
@@ -49,7 +60,7 @@ function startFeed() {
   })
 }
 async function deploy() {
-  if (access.busy || !eligible.value || (!props.redeploy && job.value?.status === 'success') || !access.validInput()) return
+  if (!endpointReady.value || access.busy || !eligible.value || (!props.redeploy && job.value?.status === 'success') || !access.validInput()) return
   const current = generation, id = access.node.id
   preparing.value = true
   access.error = ''
@@ -83,5 +94,5 @@ watch([() => access.authenticated, () => access.node?.id], async () => {
   } catch (e) { if (!disposed && current === generation) access.handleError(e) }
   finally { if (current === generation) loading.value = false }
 }, { immediate: true })
-onBeforeUnmount(() => { disposed = true; generation++; stopFeed() })
+onBeforeUnmount(() => { disposed = true; generation++; endpointVersion++; stopFeed() })
 </script>

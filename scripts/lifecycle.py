@@ -24,6 +24,18 @@ BACKEND_PORT = 7980
 FRONTEND_PORT = 3000
 
 
+def configure_ports():
+    global BACKEND_PORT, FRONTEND_PORT
+    BACKEND_PORT = int(os.getenv('WATCH_NANDA_BACKEND_PORT', '7980'))
+    FRONTEND_PORT = int(os.getenv('WATCH_NANDA_FRONTEND_PORT', '3000'))
+    if not all(1 <= port <= 65535 for port in (BACKEND_PORT, FRONTEND_PORT)):
+        raise RuntimeError('服务端口必须为 1–65535')
+
+
+def frontend_bind():
+    return '::' if ':' in os.getenv('WATCH_NANDA_HTTPS_HOST', '') else '0.0.0.0'
+
+
 def run(args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
@@ -46,8 +58,25 @@ def nginx_owned(config=None):
         return False
     content = config.read_text()
     marker = '# watch-nanda-managed-root: ' + str(ROOT.resolve())
-    registered = marker in content.splitlines() and 'root /var/www/watch-nanda;' in content
+    registered = marker in content.splitlines()
     return registered or (template.is_file() and content.strip() == template.read_text().strip())
+
+
+def static_directory():
+    def checked(value):
+        path = Path(value)
+        if not path.is_absolute() or '$' in str(path) or path == Path('/'):
+            raise RuntimeError('静态目录必须是明确的绝对路径，不能含 Nginx 变量或使用根目录')
+        return path
+    if os.environ.get('WATCH_NANDA_STATIC_DIR'):
+        return checked(os.environ['WATCH_NANDA_STATIC_DIR'])
+    config = Path('/etc/nginx/nginx.conf')
+    if config.is_file():
+        import re, shlex
+        match = re.search(r'^\s*root\s+(.+?);', config.read_text(), re.MULTILINE)
+        if match:
+            return checked(shlex.split(match.group(1))[0])
+    return Path('/var/www/watch-nanda')  # legacy marked installations only
 
 
 def managed_services():
@@ -160,13 +189,16 @@ def wait_http(port, path='/', timeout=40):
 
 
 def wait_https(port=443, path='/', timeout=40):
-    host = os.environ.get('WATCH_NANDA_HTTPS_HOST', '192.168.1.24')
+    host = os.environ.get('WATCH_NANDA_HTTPS_HOST')
+    if not host:
+        raise RuntimeError('请先运行 setup.sh --host 本站地址，或配置 WATCH_NANDA_HTTPS_HOST')
     ca = Path(os.environ.get('WATCH_NANDA_TLS_CA', '/etc/node-monitor/tls/ca.crt'))
     context = ssl.create_default_context(cafile=str(ca) if ca.is_file() else None)
+    authority = '[' + host + ']' if ':' in host else host
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urlopen(f'https://{host}:{port}{path}', context=context, timeout=2) as response:
+            with urlopen(f'https://{authority}:{port}{path}', context=context, timeout=2) as response:
                 if response.status == 200:
                     return
         except OSError:
@@ -207,7 +239,7 @@ def standalone_start():
             raise RuntimeError(f'{port} 端口被未登记进程占用，拒绝重复启动或自动换端口')
     commands = [
         ('backend', [str(python), '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', str(BACKEND_PORT)]),
-        ('frontend', [node, str(vite), 'preview', '--host', '0.0.0.0', '--port', str(FRONTEND_PORT), '--strictPort']),
+        ('frontend', [node, str(vite), 'preview', '--host', frontend_bind(), '--port', str(FRONTEND_PORT), '--strictPort']),
     ]
     new = []
     try:
@@ -240,7 +272,7 @@ def standalone_start():
         finally:
             save_state(previous + [r for r in new if owned(r)])
         raise
-    print('项目已在后台运行（重复 start 不会新增实例）。页面：https://<服务器IP>:3000；API 使用同源 HTTPS。')
+    print(f'项目已在后台运行（重复 start 不会新增实例）。HTTPS 端口：{FRONTEND_PORT}；API 使用同源 HTTPS。')
 
 
 def systemd_quote(value):
@@ -273,11 +305,11 @@ def install_services():
     if any(owned(r) for r in runtime):
         raise RuntimeError('请先运行 stop.sh 停止 standalone 实例，再安装 systemd 服务')
     python = ROOT/'backend'/'.venv'/'bin'/'python'
-    command = systemd_quote(python) + ' -m uvicorn main:app --host 127.0.0.1 --port 7980 --no-server-header'
+    command = systemd_quote(python) + f' -m uvicorn main:app --host 127.0.0.1 --port {BACKEND_PORT} --no-server-header'
     units = [(BACKEND_UNIT, ROOT/'backend', command)]
     if nginx_owned():
         # Keep old hashed assets for open browser tabs; publish index last.
-        target = Path('/var/www/watch-nanda')
+        target = static_directory()
         source = ROOT/'frontend'/'dist'
         target.mkdir(parents=True, exist_ok=True, mode=0o755)
         target.chmod(0o755)
@@ -300,7 +332,7 @@ def install_services():
         if not node:
             raise RuntimeError('找不到 Node.js')
         vite = ROOT/'frontend'/'node_modules'/'vite'/'bin'/'vite.js'
-        command = systemd_quote(node) + ' ' + systemd_quote(vite) + ' preview --host 0.0.0.0 --port 3000 --strictPort'
+        command = systemd_quote(node) + ' ' + systemd_quote(vite) + f' preview --host {frontend_bind()} --port {FRONTEND_PORT} --strictPort'
         units.append((FRONTEND_UNIT, ROOT/'frontend', command))
         frontend_service = FRONTEND_UNIT
     user = os.environ.get('WATCH_NANDA_SERVICE_USER', 'root')
@@ -311,7 +343,8 @@ def install_services():
                      if name == BACKEND_UNIT else '')
         site_environment = ''.join('Environment='+systemd_environment(key+'='+os.environ[key])+'\n'
                                    for key in ('WATCH_NANDA_HTTPS_HOST', 'WATCH_NANDA_TLS_CA', 'WATCH_NANDA_TLS_CERT',
-                                               'WATCH_NANDA_TLS_KEY') if key in os.environ)
+                                               'WATCH_NANDA_TLS_KEY', 'WATCH_NANDA_FRONTEND_PORT',
+                                               'WATCH_NANDA_BACKEND_PORT', 'HERMES_BRIDGE_PORT') if key in os.environ)
         content = ('[Unit]\nDescription=Watch Nanda '+name+'\nAfter=network-online.target docker.service\nWants=network-online.target\n'
                    '\n[Service]\nType=simple\nUser='+user+'\nWorkingDirectory='+systemd_directory(directory)+'\n'
                    'Environment=PYTHONUNBUFFERED=1\n'+site_environment+preflight+'ExecStart='+command+'\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=60\nUMask=0077\n'
@@ -371,6 +404,7 @@ def check_setup_lock():
 
 def main():
     apply_site()
+    configure_ports()
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['start','stop','restart','install','mode','prepare'])
     args = parser.parse_args()
@@ -391,7 +425,7 @@ def main():
         if services:
             systemctl('stop' if args.action == 'stop' else args.action, services)
             if args.action != 'stop':
-                wait_http(7980, '/api/servers')
+                wait_http(BACKEND_PORT, '/api/servers')
                 wait_https(443 if 'nginx.service' in services else FRONTEND_PORT)
             print('已操作本项目服务：' + ', '.join(services) + '；MySQL 不受影响。')
         elif args.action == 'stop':

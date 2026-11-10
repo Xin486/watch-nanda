@@ -15,7 +15,7 @@
         <div class="header-center">
           <span class="title-wing wing-left"></span>
           <div class="title-box">
-            <h1 class="title">{{ companyName || '南大仙林' }}</h1>
+            <h1 class="title">{{ platform.branding?.company_name || companyName || 'Node Monitor' }}</h1>
             <p class="subtitle">AI COMPUTE CLUSTER · COMMAND CENTER</p>
           </div>
           <span class="title-wing wing-right"></span>
@@ -232,6 +232,7 @@
 </template>
 
 <script setup>
+import { usePlatformSettings } from '../composables/usePlatformSettings'
 // 算力大屏：科技风全景监控（分组矩阵 / 区域占用排行 / 告警日志 / GPU 型号分布 / 天气）
 import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
 import * as echarts from 'echarts'
@@ -239,7 +240,8 @@ import { statusLabel, ageLabel } from '../utils/serverStatus'
 import { api } from '../api'
 import { useServers } from '../composables/useServers'
 
-const companyName = ref(localStorage.getItem('companyName') || '南大仙林')
+const { platform } = usePlatformSettings()
+const companyName = ref(localStorage.getItem('companyName') || 'Node Monitor')
 const { servers, subscribe } = useServers()
 const currentTime = ref('--:--:--')
 const currentDate = ref('')

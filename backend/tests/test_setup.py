@@ -61,6 +61,17 @@ class SchemaTests(unittest.TestCase):
 
 
 class SetupTests(unittest.TestCase):
+    def test_fresh_site_uses_selected_ports_and_preserves_existing_integration_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'.runtime').mkdir();(root/'backend').mkdir()
+            (root/'.runtime/site.json').write_text(json.dumps({'HERMES_CONFIG_FILE':'/private/hermes/config.json'}))
+            with patch.object(setup,'ROOT',root),patch.object(setup.life,'nginx_owned',return_value=False),patch.dict(os.environ,{},clear=True):
+                site=setup.configure_site('monitor.example','/node',3443,8900,8901)
+                self.assertEqual(site['AGENT_REPORT_URL'],'https://monitor.example:3443/api/agent/report')
+                self.assertEqual(site['WATCH_NANDA_BACKEND_PORT'],'8900')
+                self.assertEqual(site['HERMES_CONFIG_FILE'],'/private/hermes/config.json')
+                with self.assertRaises(RuntimeError):setup.configure_site('monitor.example','/node',3443,8900,8900)
+
     @unittest.skipUnless(sys.platform=='linux','Requires Linux advisory locks')
     def test_lifecycle_cannot_start_during_dependency_replacement(self):
         import fcntl

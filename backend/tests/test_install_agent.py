@@ -42,11 +42,11 @@ class InstallerTests(unittest.TestCase):
                 archive.addfile(item,io.BytesIO(b'x'))
         return path
 
-    def test_internal_and_public_addresses_are_selected_by_target_subnet(self):
-        with patch.dict(os.environ,{'AGENT_REPORT_URL':''}):
-            self.assertEqual(installer.default_report_url('192.168.1.8'),installer.DEFAULT_URL)
-            for address in ('192.168.2.8','114.212.173.212','172.16.66.177','::1'):
-                self.assertEqual(installer.default_report_url(address),installer.PUBLIC_URL)
+    def test_missing_site_never_defaults_to_another_installation(self):
+        from core import platform_config
+        with patch.dict(os.environ,{'AGENT_REPORT_URL':'', 'WATCH_NANDA_HTTPS_HOST':''}), patch.object(platform_config, 'load_site', return_value={}), patch.object(platform_config, 'read_json', return_value={}):
+            with self.assertRaises(installer.InstallError):
+                installer.default_report_url('192.0.2.8')
         args=['install_agent.py','--ip','114.212.173.212','--user','root','--port','22','--url','https://custom.invalid/report']
         with patch.object(sys,'argv',args):
             self.assertEqual(installer.parse_args().url,'https://custom.invalid/report')
@@ -312,8 +312,9 @@ class InstallerTests(unittest.TestCase):
     def test_private_key_is_rejected_as_ca(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'private.pem';path.write_text('-----BEGIN PRIVATE KEY-----')
-            args=['install_agent.py','--ip','127.0.0.1','--user','root','--port','22','--ca-file',str(path)]
-            with patch.object(sys,'argv',args),patch('sys.stderr',io.StringIO()),self.assertRaises(SystemExit): installer.parse_args()
+            args=['install_agent.py','--ip','127.0.0.1','--user','root','--port','22','--url','https://monitor.example/report','--ca-file',str(path)]
+            with patch.object(sys,'argv',args),patch('sys.stderr',io.StringIO()) as errors,self.assertRaises(SystemExit): installer.parse_args()
+            self.assertIn('私钥', errors.getvalue())
 
     def test_unknown_ssh_host_is_not_automatically_trusted(self):
         key=Mock();key.asbytes.return_value=b'test key';key.get_name.return_value='ssh-ed25519'

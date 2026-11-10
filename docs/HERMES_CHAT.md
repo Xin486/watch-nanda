@@ -6,7 +6,7 @@
 
 收起聊天框只隐藏界面，已提交的任务仍由服务器后台执行，不依赖浏览器持续轮询。悬浮入口显示“任务正在后台执行”，完成/失败/停止后提示点击查看；重新打开会接回同一任务，不重复提交。需要结束工作时点击“停止任务”；浏览器会话到期、任务超时或聊天服务停服也会中断任务。这里的后台执行不承诺跨服务重启续跑。
 
-Hermes 的长期运维职责模板在 `deploy/hermes-monitor-role.md`，部署到其 `home/SOUL.md` 的独立标记区块，保留原有内容及私有备份。职责要求先只读读取 `http://127.0.0.1:7980/api/servers`，按节点 ID、名称和 SSH 地址定位，仅执行用户指定目标与任务；歧义先确认，不自动扩展巡检或修改其他节点。它不授予额外凭据或权限。新建对话加载更新后的职责；已有对话可能保留原系统上下文，不为刷新指令中断正在执行的任务。
+Hermes 的长期运维职责模板在 `deploy/hermes-monitor-role.md`，部署到其 `home/SOUL.md` 的独立标记区块，保留原有内容及私有备份。职责要求先只读读取 `WATCH_NANDA_MONITOR_URL` 指向的本站 `/api/servers`，按节点 ID、名称和 SSH 地址定位，仅执行用户指定目标与任务；歧义先确认，不自动扩展巡检或修改其他节点。它不授予额外凭据或权限。新建对话加载更新后的职责；已有对话可能保留原系统上下文，不为刷新指令中断正在执行的任务。
 
 ## 运行结构
 
@@ -18,25 +18,15 @@ Hermes 的长期运维职责模板在 `deploy/hermes-monitor-role.md`，部署�
 - 同一浏览器会话最多 1 个、全局最多 2 个生成；单次任务默认最多 30 分钟，可通过服务环境变量 `HERMES_CHAT_TURN_TIMEOUT_SECONDS` 设置（60–3600 秒，仍受运维会话有效期约束）；消息最多 8000 字符、回复最多 128000 字符；每对话最多 100 条消息，最多 50 个内存对话，空闲超过 1 小时在新建时清理。
 - 浏览器会话失效后，下一次复核终止生成；停止与 systemd 停服清理专属进程组。对话权限和前端快照只在内存中，重启后需新建，不承诺浏览器恢复原会话；Hermes 自己的原生历史按其配置保留。
 
-## 南京安装与发布
+## 安装与配置
 
-2026-10-28 安装的 Hermes 位于 `/data2/hermes-cli`，源码 `hermes-agent/`，配置与工具 `home/`，`/home/test/.hermes` 链接到 `home/`。默认 DeepSeek `deepseek-flash`，通过云端 API 调用；密钥只保存在远程 `home/.env`，权限 600。Hermes 自有 Python 3.14 与监控 Python 3.10–3.12 分开，不替换监控运行时。
+首次安装可使用 `sudo bash setup.sh --host <本站地址> --with-hermes`；已有站点可单独运行 `sudo backend/.venv/bin/python scripts/setup_hermes.py`。新安装默认关闭，在网页“设置”填写 HTTPS API 地址、模型 ID 与 API Key 后开启。密钥私有保存、不回显、不写入浏览器缓存；更换 API 地址需重新填密钥。模型是云端 API 调用，无需下载权重。详见 [模板部署](PORTABLE_DEPLOYMENT.md)。
 
-1. 在确认 Hermes CLI 可正常运行后，把 `backend/hermes_bridge.py` 和 `backend/hermes_worker.py` 放到 `/data2/hermes-cli/web-bridge/`，属主 `test`。桥接使用可导入项目 FastAPI/uvicorn 的兼容 Python；南京为 `/usr/bin/python3`。适配器按 Hermes v0.22.5 的网关接口验证，升级 Hermes 后须复测续聊和停止；官方运行时 machine boundary 避免绑定过期 venv。
-2. 按现场路径调整 `deploy/production/watch-nanda-hermes.service`，安装到 `/etc/systemd/system/`。它以 `test` 运行，工作区 `/data2/hermes-cli/workspace`，无需 root 或额外 sudo 权限；不会自动注入平台状态、数据库连接或 SSH 密码。需要交互审批的工具操作可回到 CLI 完成，不启用 `--yolo`。
-3. 在**现有应用 server 内** include `deploy/production/hermes-chat-location.conf`。南京应放到回环 18080 的 origin server，保留 443 → 雷池 8088 → 18080 链路和现有 LAN/SD-WAN 策略。不要用仓库基础 Nginx 模板覆盖现场配置。
-4. 先 `nginx -t`，再启动 `watch-nanda-hermes.service` 并平滑 reload Nginx。此接入无需重启主监控后端、数据库迁移或运行整套 setup。
-5. 基于当前生产前端，仅加入 App 挂载及上述新组件/工具文件后构建。备份首页与源码，先复制新哈希资源，最后原子替换首页；保留旧资源支持已打开的浏览器。
+助手运行时与监控 Python 独立，固定官方 v0.22.5 提交。安装器生成单 worker 回环桥接服务，并创建独立普通账户和私有 home；已有安装核对目录和非 root 用户后复用，不删除原生历史或密钥。角色模板写入 SOUL 标记区，监控列表地址由 `WATCH_NANDA_MONITOR_URL` 提供，随内部端口生成。
 
-示例服务启停（完成上述审阅及路径调整后）：
+所有开发/独立预览 `/api` 请求先到主后端，再将 Hermes 请求转发至独立桥接；已有南京专用 Nginx location 可保留。端口分别通过 `WATCH_NANDA_BACKEND_PORT` 和 `HERMES_BRIDGE_PORT` 配置，默认 7980/7981。未开启助手时不显示悬浮入口或卡片快捷图标，服务端也拒绝新任务；关闭或配置版本变更会停止旧任务并确认原生清理，不能仅隐藏页面。
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now watch-nanda-hermes.service
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-开发/预览的 `/api/ops/hermes` 代理到回环 7981，其他 `/api` 仍到 7980。未配置独立服务的站点可以看到入口，但连接/发送时会明确提示服务不可用。
+南京既有安装位于 `/data2/hermes-cli`，保留普通用户 `test`、私有 home、历史和既有 DeepSeek 配置；新网页配置文件由 `HERMES_CONFIG_FILE` 指定。苏州及新站点不自动复用南京密钥。现有 WAF、CA 和管理网策略保持各站独立，禁止用仓库基础 Nginx 模板覆盖现场配置。
 
 ## 验证和回退
 
@@ -49,4 +39,4 @@ npm run build
 
 还需在 Linux 验证 systemd 用户权限、同源代理、缺失/伪造会话 401、不同浏览器会话隔离、真实多轮对话、停止生成以及会话撤销后的取消。仅前端发布不重启主监控；修改会话接口时需先确认无活动运维/部署/Hermes 任务，再在维护窗口重启相关服务。
 
-回退先恢复备份首页、App 源码及 Nginx 配置，`nginx -t` 后 reload，再停用 `watch-nanda-hermes`；不要删除 Hermes 密钥、原生历史、现有静态资源或用户文件。`setup.sh` 暂不管理可选聊天服务，未来整套升级须核对并保留自定义 location。
+回退先恢复备份首页、App 源码及 Nginx 配置，`nginx -t` 后 reload，再停用 `watch-nanda-hermes`；不要删除 Hermes 密钥、原生历史、现有静态资源或用户文件。回退助手需同时恢复匹配的桥接代码、服务和私有配置版本；升级可通过 `--with-hermes` 管理可选服务，保留现场自定义 location。

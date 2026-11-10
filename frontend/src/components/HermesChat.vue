@@ -3,7 +3,7 @@
     <section v-if="open" id="hermes-chat" class="hermes-panel" role="dialog" aria-label="Hermes 对话" @keydown.esc="close">
       <header class="hermes-header">
         <span class="hermes-avatar" aria-hidden="true">H<span>✦</span></span>
-        <div class="hermes-heading"><h2>Hermes 助手</h2><p><span class="hermes-dot" /> DeepSeek Flash</p></div>
+        <div class="hermes-heading"><h2>Hermes 助手</h2><p><span class="hermes-dot" /> {{ modelLabel || '已配置模型' }}</p></div>
         <button v-if="access.authenticated" class="hermes-icon" title="新建对话" aria-label="新建对话" :disabled="busy || chat.status === 'running'" @click="reset">＋</button>
         <button class="hermes-icon" title="收起对话，任务继续执行" aria-label="收起对话，任务继续执行" @click="close">×</button>
       </header>
@@ -58,6 +58,7 @@ import { createHermesChat, hermesBackgroundNotice } from '../utils/hermesChat'
 import { appendHermesNode, copyHermesNode, hermesNodeShortcutEvent } from '../utils/hermesNodeShortcut'
 
 const key = 'watch-nanda-hermes-conversation'
+defineProps({ modelLabel: { type: String, default: '' } })
 const access = useOperatorSession()
 const open = ref(false), busy = ref(false), draft = ref('')
 const backgroundNotice = ref('')

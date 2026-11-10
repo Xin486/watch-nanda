@@ -19,8 +19,6 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'backend'))
-DEFAULT_URL = 'https://192.168.1.24/api/agent/report'
-PUBLIC_URL = 'https://114.212.165.149:59443/api/agent/report'
 CONFIG = '/etc/node-monitor-agent/config.json'
 
 
@@ -30,9 +28,11 @@ class InstallError(RuntimeError):
 
 def default_report_url(ip):
     from core.config import settings  # Resolve .env/local site before choosing the target.
-    if os.getenv('AGENT_REPORT_URL'):
-        return os.environ['AGENT_REPORT_URL']
-    return DEFAULT_URL if ipaddress.ip_address(ip) in ipaddress.ip_network('192.168.1.0/24') else PUBLIC_URL
+    from core.platform_config import report_url
+    try:
+        return report_url(ip)
+    except ValueError as error:
+        raise InstallError(str(error)) from None
 
 
 def bundle_details(path):
@@ -276,7 +276,7 @@ def parse_args():
     parser.add_argument('--user', help='SSH 用户，默认 root；非 root 需 sudo（使用同一密码）')
     parser.add_argument('--port', type=int, help='SSH 端口，默认 22')
     parser.add_argument('--server-id', type=int, help='明确使用已有节点 ID，适用于 SD-WAN/NAT 或重复 IP')
-    parser.add_argument('--url', help='HTTPS 上报地址；192.168.1.* 默认内网入口，其余默认 114.212.165.149:59443')
+    parser.add_argument('--url', help='HTTPS 上报地址；默认读取设置中的入口与网络规则')
     parser.add_argument('--ca-file', type=Path, help='内部 CA 公钥证书，默认 /etc/node-monitor/tls/ca.crt；不要提供 CA 私钥')
     parser.add_argument('--bundle', type=Path, help='独立运行包；默认自动使用 agent/dist 中对应架构的安装包')
     parser.add_argument('--source', action='store_true', help='强制使用旧版 Python/venv 安装方式')
@@ -301,12 +301,17 @@ def parse_args():
         parser.error('--reinstall 必须指定已有 --server-id')
     if args.source and args.bundle:
         parser.error('--source 与 --bundle 不能同时使用')
-    args.url=args.url or default_report_url(args.ip)
+    site_default = args.url is None
+    try:
+        args.url=args.url or default_report_url(args.ip)
+    except InstallError as error:
+        parser.error(str(error))
     url = urlparse(args.url)
     if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
         parser.error('--url 需要不含凭据的 HTTPS 地址')
-    if args.ca_file is None and (args.url in (DEFAULT_URL,PUBLIC_URL) or os.getenv('AGENT_REPORT_URL') == args.url):
-        args.ca_file = Path(os.getenv('AGENT_CA_FILE', '/etc/node-monitor/tls/ca.crt'))
+    if args.ca_file is None and site_default:
+        from core.platform_config import report_ca
+        args.ca_file = report_ca()
     if args.ca_file is not None:
         import ssl
         try:

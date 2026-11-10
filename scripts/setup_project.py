@@ -50,7 +50,7 @@ def detect_host():
     raise RuntimeError('无法确定 HTTPS 地址，请指定 --host IP或域名')
 
 
-def configure_site(host, node):
+def configure_site(host, node, port=None, backend_port=None, hermes_port=None):
     previous = load_site(ROOT)
     # Read existing .env without importing application dependencies into bootstrap.
     # Actual .env overrides remain authoritative when the application starts.
@@ -59,11 +59,14 @@ def configure_site(host, node):
     old_host = os.environ.get('WATCH_NANDA_HTTPS_HOST') or configured.get('WATCH_NANDA_HTTPS_HOST') or previous.get('WATCH_NANDA_HTTPS_HOST')
     if host and old_host and host != old_host:
         raise RuntimeError('已有 HTTPS 地址与 --host 不符；升级不自动轮换证书，请单独规划地址迁移')
-    host = host or old_host or ('192.168.1.24' if life.nginx_owned() else detect_host())
+    host = host or old_host or detect_host()
     # Validate that the argument is a host, never a URL/path or shell expression.
     import re
-    if not re.fullmatch(r'[A-Za-z0-9.-]+', host) or '..' in host:
-        raise RuntimeError('--host 需要 IPv4 地址或域名，不含端口/协议/路径')
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not re.fullmatch(r'[A-Za-z0-9.-]+', host) or '..' in host:
+            raise RuntimeError('--host 需要 IP 地址或域名，不含端口/协议/路径')
     secure = Path('/etc/node-monitor') if os.geteuid() == 0 else ROOT/'.runtime/secure'
     defaults = {'WATCH_NANDA_HTTPS_HOST': host, 'WATCH_NANDA_NODE': node,
                 'WATCH_NANDA_TLS_CA': str(secure/'tls/ca.crt'),
@@ -72,15 +75,27 @@ def configure_site(host, node):
                 'SSH_CREDENTIAL_KEY_FILE': str(secure/'ssh-credentials.key'),
                 'OPS_PASSWORD_FILE': str(secure/'ops-password.json'),
                 'SSH_PROFILES_FILE': str(secure/'ssh-profiles.json')}
-    values = {key: os.environ.get(key) or configured.get(key) or previous.get(key) or value
+    values = previous | {key: os.environ.get(key) or configured.get(key) or previous.get(key) or value
               for key, value in defaults.items()}
     values['WATCH_NANDA_NODE'] = node
-    # Preserve the existing Nanjing split LAN/WAN report URL policy.
-    if not life.nginx_owned():
-        values['AGENT_REPORT_URL'] = (os.environ.get('AGENT_REPORT_URL') or configured.get('AGENT_REPORT_URL')
-                                      or previous.get('AGENT_REPORT_URL') or f'https://{host}:3000/api/agent/report')
-        values['AGENT_CA_FILE'] = (os.environ.get('AGENT_CA_FILE') or configured.get('AGENT_CA_FILE')
-                                   or previous.get('AGENT_CA_FILE') or values['WATCH_NANDA_TLS_CA'])
+    for key, explicit, fallback in [('WATCH_NANDA_FRONTEND_PORT', port, 3000),
+                                    ('WATCH_NANDA_BACKEND_PORT', backend_port, 7980),
+                                    ('HERMES_BRIDGE_PORT', hermes_port, 7981)]:
+        value = int(explicit if explicit is not None and explicit != '' else os.environ.get(key) or configured.get(key) or previous.get(key) or fallback)
+        if not 1 <= value <= 65535:
+            raise RuntimeError('服务端口必须为 1–65535')
+        values[key] = str(value)
+    if len({values[k] for k in ('WATCH_NANDA_FRONTEND_PORT', 'WATCH_NANDA_BACKEND_PORT', 'HERMES_BRIDGE_PORT')}) != 3:
+        raise RuntimeError('前端、后端和助手内部端口不能重复')
+    # Existing explicit endpoints and web settings survive upgrades unchanged.
+    # New installations always report to their own HTTPS entry, never another site.
+    report_port = 443 if life.nginx_owned() else int(values['WATCH_NANDA_FRONTEND_PORT'])
+    authority = '[' + host + ']' if ':' in host else host
+    authority = authority if report_port == 443 else f'{authority}:{report_port}'
+    values['AGENT_REPORT_URL'] = (os.environ.get('AGENT_REPORT_URL') or configured.get('AGENT_REPORT_URL')
+                                  or previous.get('AGENT_REPORT_URL') or f'https://{authority}/api/agent/report')
+    values['AGENT_CA_FILE'] = (os.environ.get('AGENT_CA_FILE') or configured.get('AGENT_CA_FILE')
+                               or previous.get('AGENT_CA_FILE') or values['WATCH_NANDA_TLS_CA'])
     path = ROOT/'.runtime/site.json'
     temp = path.with_suffix('.new')
     temp.write_text(json.dumps(values, ensure_ascii=False, indent=2)+'\n')
@@ -159,7 +174,7 @@ class Upgrade:
         self.background = [r for r in life.read_state() if life.owned(r)]
         self.legacy = []
         if not self.services and not self.background:
-            for role, port in (('backend',7980),('frontend',3000)):
+            for role, port in (('backend',life.BACKEND_PORT),('frontend',life.FRONTEND_PORT)):
                 record = legacy_listener(port, role)
                 if record:
                     self.legacy.append(record)
@@ -176,7 +191,7 @@ class Upgrade:
                 shutil.copy2(source, target)
                 target.chmod(0o600)
         if life.nginx_owned():
-            target = Path('/var/www/watch-nanda')
+            target = life.static_directory()
             if (target/'index.html').is_file():
                 shutil.copy2(target/'index.html', self.backup/'published-index.html')
         (self.backup/'RECOVERY.md').write_text(
@@ -210,7 +225,7 @@ class Upgrade:
         self.stopped = True
         life.prepare_setup()
         # Unregistered legacy listeners are not safe to terminate automatically.
-        if not life.port_free(7980) or (not life.nginx_owned() and not life.port_free(3000)):
+        if not life.port_free(life.BACKEND_PORT) or (not life.nginx_owned() and not life.port_free(life.FRONTEND_PORT)):
             raise RuntimeError('项目端口仍被未登记进程占用；请确认旧进程归属后停止，不会按名称全局杀进程')
 
     def move(self, relative):
@@ -262,7 +277,7 @@ class Upgrade:
                 run(['systemctl', 'daemon-reload'])
             published = self.backup/'published-index.html'
             if published.is_file():
-                shutil.copy2(published, '/var/www/watch-nanda/index.html')
+                shutil.copy2(published, life.static_directory()/'index.html')
             if self.active:
                 run(['systemctl', 'start', *self.active], timeout=150)
             elif self.background:
@@ -304,15 +319,23 @@ def main():
     mode.add_argument('--systemd', action='store_true')
     mode.add_argument('--standalone', action='store_true')
     parser.add_argument('--host')
+    parser.add_argument('--port', type=int, help='本站 HTTPS 预览端口，默认 3000')
+    parser.add_argument('--backend-port', type=int, help='回环后端端口，默认 7980')
+    parser.add_argument('--hermes-port', type=int, help='回环助手端口，默认 7981')
+    parser.add_argument('--with-hermes', action='store_true', help='安装隔离的可选 Hermes 运行环境')
     parser.add_argument('--skip-deps', action='store_true')
     parser.add_argument('--skip-agent-build', action='store_true')
     parser.add_argument('--no-bootstrap', action='store_true')
     parser.add_argument('--no-start', action='store_true')
     parser.add_argument('--ops-password-file')
     args = parser.parse_args()
+    if args.with_hermes and (args.standalone or os.geteuid() != 0):
+        raise RuntimeError('--with-hermes 需要管理员权限和 systemd，不能与 --standalone 合用')
     if sys.platform != 'linux':
         raise RuntimeError('setup 仅支持 Linux')
     with installation_lock():
+        apply_site(ROOT)
+        life.configure_ports()
         os.environ['WATCH_NANDA_SETUP_PID'] = str(os.getpid())
         import ssl
         if not ssl.create_default_context().get_ca_certs():
@@ -351,9 +374,11 @@ def main():
             # Execute the dependency-using steps in the application's new venv.
             run([python, ROOT/'scripts/initialize.py', '--prepare-env'])
             # dotenv is installed in that venv, not necessarily in system Python.
-            site_args = [python, __file__, '--configure-site', node, args.host or '']
+            site_args = [python, __file__, '--configure-site', node, args.host or '',
+                         *(str(value) if value is not None else '' for value in (args.port, args.backend_port, args.hermes_port))]
             run(site_args)
             os.environ.update(load_site(ROOT))
+            life.configure_ports()
             # Back up existing site secrets before security initialization. New
             # installs leave these absent; repeat installs retain their bytes.
             for key in ('WATCH_NANDA_TLS_CA', 'WATCH_NANDA_TLS_CERT', 'WATCH_NANDA_TLS_KEY',
@@ -399,17 +424,22 @@ def main():
                 run([python, ROOT/'scripts/lifecycle.py', 'start'], timeout=180)
             (transaction.backup/'SUCCESS').write_text(datetime.now().isoformat()+'\n')
             print('初始化/覆盖升级完成。已有配置、密钥、节点 ID 和历史数据保留。', flush=True)
-            print('页面：https://'+os.environ['WATCH_NANDA_HTTPS_HOST']+('' if life.nginx_owned() else ':3000'), flush=True)
+            authority = os.environ['WATCH_NANDA_HTTPS_HOST']
+            if ':' in authority: authority = '[' + authority + ']'
+            print('页面：https://'+authority+('' if life.nginx_owned() else ':'+os.environ['WATCH_NANDA_FRONTEND_PORT']), flush=True)
         except BaseException:
             if transaction.stopped:
                 transaction.rollback()
             raise
+        # Optional component failure must not roll back a healthy monitor or DB.
+        if args.with_hermes:
+            run([python, ROOT/'scripts/setup_hermes.py'])
 
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) == 4 and sys.argv[1] == '--configure-site':
-            configure_site(sys.argv[3] or None, sys.argv[2])
+        if len(sys.argv) == 7 and sys.argv[1] == '--configure-site':
+            configure_site(sys.argv[3] or None, sys.argv[2], *(value or None for value in sys.argv[4:7]))
         else:
             main()
     except (Exception, KeyboardInterrupt) as error:

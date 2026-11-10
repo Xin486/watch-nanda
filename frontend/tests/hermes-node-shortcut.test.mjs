@@ -16,6 +16,7 @@ function harness({ authenticated = true, clipboard = true, session = async () =>
     async login() { this.authenticated = true }, async logout() { this.authenticated = false },
   })
   const context = {
+    defineProps: () => ({ modelLabel: 'test-model' }),
     ref, watch: (...args) => cleanups.push(watch(...args)), nextTick,
     onMounted: fn => fn(), onBeforeUnmount: fn => cleanups.push(fn),
     useOperatorSession: () => access, hermesBackgroundNotice: () => '',

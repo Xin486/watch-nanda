@@ -8,19 +8,19 @@ export default defineConfig(({ command }) => {
     key: readFileSync(process.env.WATCH_NANDA_TLS_KEY || '/etc/node-monitor/tls/server.key'),
   } : undefined
   const proxy = {
-    '/api/ops/hermes': { target: 'http://127.0.0.1:7981', headers: { 'X-Forwarded-Proto': 'https' } },
-    '/api': { target: 'http://127.0.0.1:7980', ws: true, headers: { 'X-Forwarded-Proto': 'https' } },
+    '/api': { target: `http://127.0.0.1:${process.env.WATCH_NANDA_BACKEND_PORT || 7980}`, ws: true, headers: { 'X-Forwarded-Proto': 'https' } },
   }
+  const bindHost = process.env.WATCH_NANDA_HTTPS_HOST?.includes(':') ? '::' : '0.0.0.0'
   return {
   plugins: [vue()],
   server: {
-    port: 3000,
-    host: '0.0.0.0', // 允许通过服务器 IP 外部访问
+    port: Number(process.env.WATCH_NANDA_FRONTEND_PORT || 3000),
+    host: bindHost,
     strictPort: true,
     open: false,
     https,
     proxy,
   },
-  preview: { host: '0.0.0.0', port: 3000, strictPort: true, https, proxy },
+  preview: { host: bindHost, port: Number(process.env.WATCH_NANDA_FRONTEND_PORT || 3000), strictPort: true, https, proxy },
   }
 })
