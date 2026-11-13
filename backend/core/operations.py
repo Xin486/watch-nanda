@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from core import ops_auth, deployment_stream
 from core.ssh_credentials import decrypt_password, encrypt_password
+from core.ssh_errors import AUTH_MESSAGES, AuthenticationUnavailable, authentication_failure_kind
 from core.status import freshness
 from models.database import SessionLocal
 from models.models import Server
@@ -101,12 +102,20 @@ def connect_ssh(config):
                        channel_timeout=10)
         client.get_transport().set_keepalive(20)
         return client
-    except BaseException:
+    except BaseException as error:
+        if isinstance(error, paramiko.AuthenticationException):
+            kind = authentication_failure_kind(error, client)
+            client.close()
+            if kind != 'authentication_rejected':
+                raise AuthenticationUnavailable(kind) from None
+            raise
         client.close()
         raise
 
 
 def safe_error(error):
+    if isinstance(error, AuthenticationUnavailable):
+        return {'ok': False, 'code': error.kind, 'message': AUTH_MESSAGES[error.kind].replace('下一周期自动重试', '请稍后重试连接')}
     if isinstance(error, UnknownHost):
         return {'ok': False, 'code': 'unknown_host', 'message': '首次连接，请核对目标主机指纹后确认信任', 'fingerprint': error.fingerprint}
     if isinstance(error, paramiko.BadHostKeyException):

@@ -31,6 +31,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from core.status import freshness, collection_time
 from core.config import settings
 from core.ssh_credentials import decrypt_password
+from core.ssh_errors import AUTH_MESSAGES, authentication_failure_kind
 from models.database import SessionLocal
 from models.models import AlertConfig, EmailConfig, Server, ServerStats, AgentCredential
 
@@ -44,7 +45,7 @@ logger.setLevel(logging.INFO)
 if not logger.hasHandlers():
     logger.addHandler(logging.StreamHandler())
 scheduler = None
-# A rejected password is tried once per configuration, avoiding account lockout.
+# Only explicit rejections on live transports block a credential version.
 rejected_credentials = {}
 
 # SSH 采集线程池（最多同时并发采集 50 台服务器）
@@ -390,7 +391,9 @@ def collect_server_data(server):
         password = decrypt_password(server)
         credential_version = getattr(server, 'ssh_password_encrypted', None)
         if rejected_credentials.get(getattr(server, 'id', None)) == credential_version:
-            raise ValueError('SSH 密码认证失败，请更新密码后重试')
+            error = AUTH_MESSAGES['authentication_rejected']
+            data.update(error_message=error, ssh_error_code='authentication_rejected', ssh_retryable=False)
+            return data, False, error
         cmd = (
             "export PATH=$PATH:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin; "
             "echo '<<<UPTIME>>>'; cat /proc/uptime; "
@@ -415,6 +418,7 @@ def collect_server_data(server):
             password=password, look_for_keys=False, allow_agent=False,
             timeout=15, banner_timeout=15, auth_timeout=15,
         )
+        rejected_credentials.pop(getattr(server, 'id', None), None)
 
         _, stdout, _ = client.exec_command(cmd, timeout=15)
         output = stdout.read().decode("utf-8", errors="ignore")
@@ -462,8 +466,11 @@ def collect_server_data(server):
 
     except Exception as e:
         if isinstance(e, paramiko.AuthenticationException):
-            rejected_credentials[getattr(server, 'id', None)] = getattr(server, 'ssh_password_encrypted', None)
-            error = 'SSH 密码认证失败，请更新密码后重试'
+            kind = authentication_failure_kind(e, client)
+            if kind == 'authentication_rejected':
+                rejected_credentials[getattr(server, 'id', None)] = getattr(server, 'ssh_password_encrypted', None)
+            data.update(ssh_error_code=kind, ssh_retryable=kind != 'authentication_rejected')
+            error = AUTH_MESSAGES[kind]
         elif isinstance(e, paramiko.BadHostKeyException):
             error = 'SSH 主机指纹不匹配，请由管理员核验'
         elif isinstance(e, ValueError):

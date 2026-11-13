@@ -189,6 +189,27 @@ class AgentBatchTests(unittest.TestCase):
             with patch.object(ssh_profiles,'candidates',side_effect=choices),patch.object(ops,'connect_ssh',side_effect=paramiko.AuthenticationException()) as connect:
                 self.assertEqual(self.run_one(entry)['status'],'needs_credentials');self.assertEqual(connect.call_count,3)
 
+    def test_auth_timeout_and_disconnected_auth_failure_do_not_cycle_passwords(self):
+        self.agents()
+        with self.client() as client:
+            self.login(client)
+            entry = self.create(client)
+            choices = lambda: [{'username': 'root', 'password': f'secret-{i}'} for i in range(3)]
+            cases = [('Authentication timeout.', True, '认证超时'),
+                     ('Authentication failed.', False, '连接中断'),
+                     ('private-failure', True, '暂时异常')]
+            for message, active, expected in cases:
+                with self.subTest(expected=expected), patch.object(ssh_profiles, 'candidates', side_effect=choices), patch.object(ops.paramiko, 'SSHClient') as factory:
+                    connection = factory.return_value
+                    connection.get_transport.return_value.is_active.return_value = active
+                    connection.connect.side_effect = paramiko.AuthenticationException(message)
+                    item = self.run_one(entry)
+                    self.assertEqual(item['status'], 'failed')
+                    self.assertIn(expected, item['message'])
+                    self.assertNotIn('private-failure', str(item))
+                    self.assertEqual(connection.connect.call_count, 1)
+                    connection.close.assert_called_once()
+
     def test_logs_are_requested_per_node_and_bulk_retry_never_trusts_hosts(self):
         self.agents(2)
         with self.client() as client:
